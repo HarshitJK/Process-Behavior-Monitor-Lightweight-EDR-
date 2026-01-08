@@ -1,0 +1,63 @@
+2025-12-13 16:21:12 - INFO - EDR System started
+2025-12-13 16:21:12 - ERROR - Unexpected error: 'ProcessScanner' object has no attribute 'get_all_processes'
+2025-12-13 16:21:12 - INFO - EDR System stopped
+2025-12-13 16:23:42 - INFO - EDR System started
+2025-12-13 16:23:51 - WARNING - Suspicious process detected - PID: 0, Name: System Idle Process, CPU: 659.50%, Memory: 0.00%, Reasons: High CPU usage: 659.50% for 6.56 seconds (threshold: 80.0% for 5.0s)
+2025-12-13 16:23:51 - ERROR - Access denied when trying to kill process 0 (System Idle Process)
+2025-12-13 16:23:53 - WARNING - Suspicious process detected - PID: 0, Name: System Idle Process, CPU: 665.50%, Memory: 0.00%, Reasons: High CPU usage: 665.50% for 8.79 seconds (threshold: 80.0% for 5.0s)
+2025-12-13 16:23:53 - ERROR - Access denied when trying to kill process 0 (System Idle Process)
+2025-12-13 16:23:55 - WARNING - Suspicious process detected - PID: 0, Name: System Idle Process, CPU: 637.60%, Memory: 0.00%, Reasons: High CPU usage: 637.60% for 11.02 seconds (threshold: 80.0% for 5.0s)
+2025-12-13 16:23:55 - ERROR - Access denied when trying to kill process 0 (System Idle Process)
+2025-12-13 16:23:57 - WARNING - Suspicious process detected - PID: 0, Name: System Idle Process, CPU: 611.50%, Memory: 0.00%, Reasons: High CPU usage: 611.50% for 13.35 seconds (threshold: 80.0% for 5.0s)
+2025-12-13 16:23:57 - ERROR - Access denied when trying to kill process 0 (System Idle Process)
+2025-12-13 16:24:00 - WARNING - Suspicious process detected - PID: 0, Name: System Idle Process, CPU: 557.10%, Memory: 0.00%, Reasons: High CPU usage: 557.10% for 15.58 seconds (threshold: 80.0% for 5.0s)
+2025-12-13 16:24:00 - ERROR - Access denied when trying to kill process 0 (System Idle Process)
+2025-12-13 16:24:02 - WARNING - Suspicious process detected - PID: 0, Name: System Idle Process, CPU: 619.40%, Memory: 0.00%, Reasons: High CPU usage: 619.40% for 17.81 seconds (threshold: 80.0% for 5.0s)
+2025-12-13 16:24:02 - ERROR - Access denied when trying to kill process 0 (System Idle Process)
+2025-12-13 16:24:04 - WARNING - Suspicious process detected - PID: 0, Name: System Idle Process, CPU: 653.70%, Memory: 0.00%, Reasons: High CPU usage: 653.70% for 20.02 seconds (threshold: 80.0% for 5.0s)
+2025-12-13 16:24:04 - ERROR - Access denied when trying to kill process 0 (System Idle Process)
+2025-12-13 16:24:06 - WARNING - Suspicious process detected - PID: 0, Name: System Idle Process, CPU: 659.00%, Memory: 0.00%, Reasons: High CPU usage: 659.00% for 22.25 seconds (threshold: 80.0% for 5.0s)
+2025-12-13 16:24:06 - ERROR - Access denied when trying to kill process 0 (System Idle Process)
+2025-12-13 16:24:09 - WARNING - Suspicious process detected - PID: 0, Name: System Idle Process, CPU: 639.20%, Memory: 0.00%, Reasons: High CPU usage: 639.20% for 24.50 seconds (threshold: 80.0% for 5.0s)
+2025-12-13 16:24:09 - ERROR - Access denied when trying to kill process 0 (System Idle Process)
+2025-12-13 16:24:11 - WARNING - Suspicious process detected - PID: 0, Name: System Idle Process, CPU: 620.40%, Memory: 0.00%, Reasons: High CPU usage: 620.40% for 26.73 seconds (threshold: 80.0% for 5.0s)
+2025-12-13 16:24:11 - ERROR - Access denied when trying to kill process 0 (System Idle Process)
+2025-12-13 16:24:13 - WARNING - Suspicious process detected - PID: 0, Name: System Idle Process, CPU: 640.10%, Memory: 0.00%, Reasons: High CPU usage: 640.10% for 28.93 seconds (threshold: 80.0% for 5.0s)
+2025-12-13 16:24:13 - ERROR - Access denied when trying to kill process 0 (System Idle Process)
+2025-12-13 16:24:15 - WARNING - Suspicious process detected - PID: 0, Name: System Idle Process, CPU: 646.70%, Memory: 0.00%, Reasons: High CPU usage: 646.70% for 31.13 seconds (threshold: 80.0% for 5.0s)
+2025-12-13 16:24:15 - ERROR - Access denied when trying to kill process 0 (System Idle Process)
+2025-12-13 16:24:17 - WARNING - Suspicious process detected - PID: 0, Name: System Idle Process, CPU: 645.50%, Memory: 0.00%, Reasons: High CPU usage: 645.50% for 33.31 seconds (threshold: 80.0% for 5.0s)
+2025-12-13 16:24:17 - ERROR - Access denied when trying to kill process 0 (System Idle Process)
+2025-12-13 16:24:20 - WARNING - Suspicious process detected - PID: 0, Name: System Idle Process, CPU: 633.30%, Memory: 0.00%, Reasons: High CPU usage: 633.30% for 35.44 seconds (threshold: 80.0% for 5.0s)
+2025-12-13 16:24:20 - ERROR - Access denied when trying to kill process 0 (System Idle Process)
+2025-12-13 16:24:22 - WARNING - Suspicious process detected - PID: 0, Name: System Idle Process, CPU: 663.50%, Memory: 0.00%, Reasons: High CPU usage: 663.50% for 37.59 seconds (threshold: 80.0% for 5.0s)
+2025-12-13 16:24:22 - ERROR - Access denied when trying to kill process 0 (System Idle Process)
+2025-12-13 16:24:23 - INFO - EDR System stopped
+2025-12-13 16:24:36 - INFO - EDR System started
+2025-12-13 16:24:44 - WARNING - Suspicious process detected - PID: 0, Name: System Idle Process, CPU: 671.50%, Memory: 0.00%, Reasons: High CPU usage: 671.50% for 5.85 seconds (threshold: 80.0% for 5.0s)
+2025-12-13 16:24:44 - ERROR - Access denied when trying to kill process 0 (System Idle Process)
+2025-12-13 16:24:46 - WARNING - Suspicious process detected - PID: 0, Name: System Idle Process, CPU: 640.90%, Memory: 0.00%, Reasons: High CPU usage: 640.90% for 7.85 seconds (threshold: 80.0% for 5.0s)
+2025-12-13 16:24:46 - ERROR - Access denied when trying to kill process 0 (System Idle Process)
+2025-12-13 16:24:48 - WARNING - Suspicious process detected - PID: 0, Name: System Idle Process, CPU: 629.00%, Memory: 0.00%, Reasons: High CPU usage: 629.00% for 9.81 seconds (threshold: 80.0% for 5.0s)
+2025-12-13 16:24:48 - ERROR - Access denied when trying to kill process 0 (System Idle Process)
+2025-12-13 16:24:50 - INFO - EDR System stopped
+2026-01-08 12:29:47,145 | INFO | PROCESS ALERT | PID=0 | NAME=System Idle Process | REASON=Sustained high CPU usage (> 80.0%)
+2026-01-08 12:29:47,160 | ERROR | ACCESS DENIED | PID=0
+2026-01-08 12:29:49,547 | INFO | PROCESS ALERT | PID=0 | NAME=System Idle Process | REASON=Sustained high CPU usage (> 80.0%)
+2026-01-08 12:29:49,562 | ERROR | ACCESS DENIED | PID=0
+2026-01-08 12:29:51,879 | INFO | PROCESS ALERT | PID=0 | NAME=System Idle Process | REASON=Sustained high CPU usage (> 80.0%)
+2026-01-08 12:29:51,894 | ERROR | ACCESS DENIED | PID=0
+2026-01-08 12:29:54,315 | INFO | PROCESS ALERT | PID=0 | NAME=System Idle Process | REASON=Sustained high CPU usage (> 80.0%)
+2026-01-08 12:29:54,330 | ERROR | ACCESS DENIED | PID=0
+2026-01-08 12:29:56,674 | INFO | PROCESS ALERT | PID=0 | NAME=System Idle Process | REASON=Sustained high CPU usage (> 80.0%)
+2026-01-08 12:29:56,690 | ERROR | ACCESS DENIED | PID=0
+2026-01-08 12:29:59,024 | INFO | PROCESS ALERT | PID=0 | NAME=System Idle Process | REASON=Sustained high CPU usage (> 80.0%)
+2026-01-08 12:29:59,038 | ERROR | ACCESS DENIED | PID=0
+2026-01-08 12:30:01,539 | INFO | PROCESS ALERT | PID=0 | NAME=System Idle Process | REASON=Sustained high CPU usage (> 80.0%)
+2026-01-08 12:30:01,554 | ERROR | ACCESS DENIED | PID=0
+2026-01-08 12:30:03,906 | INFO | PROCESS ALERT | PID=0 | NAME=System Idle Process | REASON=Sustained high CPU usage (> 80.0%)
+2026-01-08 12:30:03,919 | ERROR | ACCESS DENIED | PID=0
+2026-01-08 12:30:06,333 | INFO | PROCESS ALERT | PID=0 | NAME=System Idle Process | REASON=Sustained high CPU usage (> 80.0%)
+2026-01-08 12:30:06,350 | ERROR | ACCESS DENIED | PID=0
+2026-01-08 12:30:08,805 | INFO | PROCESS ALERT | PID=0 | NAME=System Idle Process | REASON=Sustained high CPU usage (> 80.0%)
+2026-01-08 12:30:08,821 | ERROR | ACCESS DENIED | PID=0
