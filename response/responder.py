@@ -116,46 +116,148 @@ class Responder:
 
     def _terminate_process(self, pid: int, name: str) -> str:
         """
-        Safely terminate the suspicious process.
+        FIXED: Safely terminate the suspicious process.
         Tries graceful termination first, then force kill if needed.
+        
+        FIXES APPLIED:
+        - Added debug output
+        - Improved error handling
+        - Added process existence check
+        - Better confirmation messages
         
         Returns:
             str: Description of action taken
         """
+        if EDRConfig.DEBUG_MODE:
+            print(f"\n[DEBUG] Attempting to terminate PID {pid} ({name})")
+        
         try:
+            # Get process object
             proc = psutil.Process(pid)
             
-            # Try graceful termination first
+            # Verify process exists and is running
+            if not proc.is_running():
+                action = f"Process PID {pid} is not running"
+                self.logger.warning(f"PROCESS NOT RUNNING | PID={pid}")
+                if EDRConfig.DEBUG_MODE:
+                    print(f"[DEBUG] Process not running")
+                return action
+            
+            if EDRConfig.DEBUG_MODE:
+                print(f"[DEBUG] Process found and running")
+                print(f"[DEBUG] Attempting graceful termination...")
+            
+            # Step 1: Try graceful termination first
             proc.terminate()
             
             try:
-                # Wait for graceful termination
+                # Wait for graceful termination (up to 3 seconds)
                 proc.wait(timeout=EDRConfig.GRACEFUL_TIMEOUT)
-                action = f"Process {name} (PID {pid}) terminated gracefully"
+                
+                # Success - process terminated gracefully
+                action = f"✓ Process {name} (PID {pid}) terminated gracefully"
                 self.logger.info(f"ACTION TAKEN | {action}")
+                
+                if EDRConfig.DEBUG_MODE:
+                    print(f"[DEBUG] ✓ Graceful termination successful")
+                
+                print(f"\n{'='*60}")
+                print(f"PROCESS TERMINATED SUCCESSFULLY")
+                print(f"{'='*60}")
+                print(f"PID: {pid}")
+                print(f"Name: {name}")
+                print(f"Method: Graceful termination")
+                print(f"{'='*60}\n")
+                
                 return action
                 
             except psutil.TimeoutExpired:
                 # Graceful termination failed, force kill
+                if EDRConfig.DEBUG_MODE:
+                    print(f"[DEBUG] Graceful termination timed out")
+                    print(f"[DEBUG] Attempting force kill...")
+                
+                # Step 2: Force kill
                 proc.kill()
-                proc.wait(timeout=2)
-                action = f"Process {name} (PID {pid}) force killed (graceful termination failed)"
+                
+                # Wait for force kill to complete
+                try:
+                    proc.wait(timeout=2)
+                except psutil.TimeoutExpired:
+                    pass  # Process should be dead now
+                
+                # Verify process is dead
+                try:
+                    if proc.is_running():
+                        action = f"⚠ Process {name} (PID {pid}) still running after kill attempt"
+                        self.logger.error(f"KILL FAILED | PID={pid}")
+                        
+                        if EDRConfig.DEBUG_MODE:
+                            print(f"[DEBUG] ✗ Force kill failed - process still running")
+                        
+                        return action
+                except psutil.NoSuchProcess:
+                    # Process is dead (expected)
+                    pass
+                
+                action = f"✓ Process {name} (PID {pid}) force killed (graceful failed)"
                 self.logger.warning(f"ACTION TAKEN | {action}")
+                
+                if EDRConfig.DEBUG_MODE:
+                    print(f"[DEBUG] ✓ Force kill successful")
+                
+                print(f"\n{'='*60}")
+                print(f"PROCESS TERMINATED SUCCESSFULLY")
+                print(f"{'='*60}")
+                print(f"PID: {pid}")
+                print(f"Name: {name}")
+                print(f"Method: Force kill (graceful timeout)")
+                print(f"{'='*60}\n")
+                
                 return action
 
         except psutil.NoSuchProcess:
-            action = f"Process PID {pid} already terminated"
+            action = f"Process PID {pid} already terminated or does not exist"
             self.logger.warning(f"PROCESS NOT FOUND | PID={pid}")
+            
+            if EDRConfig.DEBUG_MODE:
+                print(f"[DEBUG] Process not found (already dead)")
+            
             return action
 
         except psutil.AccessDenied:
-            action = f"Access denied while terminating PID {pid} - requires elevated privileges"
+            action = f"✗ Access denied terminating PID {pid} - requires elevated privileges (sudo/admin)"
             self.logger.error(f"ACCESS DENIED | PID={pid}")
+            
+            if EDRConfig.DEBUG_MODE:
+                print(f"[DEBUG] ✗ Access denied - need sudo/admin privileges")
+            
+            print(f"\n{'='*60}")
+            print(f"TERMINATION FAILED - PERMISSION DENIED")
+            print(f"{'='*60}")
+            print(f"PID: {pid}")
+            print(f"Name: {name}")
+            print(f"Error: Requires elevated privileges")
+            print(f"Solution: Run EDR with sudo/administrator rights")
+            print(f"{'='*60}\n")
+            
             return action
 
         except Exception as e:
-            action = f"Failed to terminate PID {pid}: {str(e)}"
+            action = f"✗ Failed to terminate PID {pid}: {str(e)}"
             self.logger.error(f"TERMINATION FAILED | PID={pid} | ERROR={e}")
+            
+            if EDRConfig.DEBUG_MODE:
+                print(f"[DEBUG] ✗ Unexpected error: {e}")
+            
+            print(f"\n{'='*60}")
+            print(f"TERMINATION FAILED - UNEXPECTED ERROR")
+            print(f"{'='*60}")
+            print(f"PID: {pid}")
+            print(f"Name: {name}")
+            print(f"Error: {e}")
+            print(f"{'='*60}\n")
+            
             return action
 
     def handle_file_threat(self, changes: List, trigger_file: str):

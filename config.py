@@ -19,7 +19,10 @@ class EDRConfig:
     CPU_THRESHOLD = 80.0  # CPU usage percentage threshold
     CPU_CONSECUTIVE_CHECKS = 5  # Number of consecutive high CPU checks required
     
-    MEMORY_THRESHOLD = 70.0  # Memory usage percentage threshold
+    # FIXED: Independent memory thresholds
+    MEMORY_WARNING_THRESHOLD = 60.0  # Memory % for WARNING (independent)
+    MEMORY_CRITICAL_THRESHOLD = 80.0  # Memory % for CRITICAL (independent)
+    MEMORY_THRESHOLD = 70.0  # Legacy threshold (kept for compatibility)
     COMBINED_CPU_THRESHOLD = 50.0  # CPU threshold for combined detection
     
     # ===========================
@@ -32,13 +35,18 @@ class EDRConfig:
     # ===========================
     FILE_CHANGE_THRESHOLD = 10  # Number of file changes to trigger alert
     FILE_TIME_WINDOW = 5.0  # Time window in seconds
-    MONITOR_DIRECTORY = "monitored"  # Directory to monitor
+    MONITOR_DIRECTORY = "testing_malware"  # Directory to monitor
     
     # ===========================
     # Response Config
     # ===========================
     AUTO_TERMINATE = True  # Enable automatic process termination
     GRACEFUL_TIMEOUT = 3  # Seconds to wait for graceful termination
+    
+    # ===========================
+    # Debug Config
+    # ===========================
+    DEBUG_MODE = True  # Enable debug prints for detection logic
     
     # ===========================
     # Logging Config
@@ -61,3 +69,4 @@ class EDRConfig:
     GUI_TOP_PROCESSES = 10  # Number of top processes to display
     GUI_MAX_ALERTS = 20  # Maximum alerts to display
     GUI_MAX_LOGS = 100  # Maximum log entries to display
+
