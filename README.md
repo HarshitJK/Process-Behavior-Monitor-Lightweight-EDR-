@@ -1,5 +1,21 @@
 # Process-Based Behavioral Monitoring System (Lightweight EDR)
 
+---
+## 🚀 **UPGRADED VERSION AVAILABLE!**
+
+**This project has been upgraded with major improvements:**
+- ✅ Improved detection accuracy (consecutive checks, combined indicators, cooldown)
+- ✅ Enhanced response system (severity levels, JSON logs, safe termination)
+- ✅ Professional GUI Dashboard (Tkinter-based with live monitoring)
+
+**See [README_UPGRADED.md](README_UPGRADED.md) for the new features and usage!**
+
+**Quick Start (Upgraded Version):**
+```bash
+python main.py --gui
+```
+---
+
 ## Project Overview
 
 This is an educational mini-project implementing a lightweight Endpoint Detection and Response (EDR) system. The system monitors running processes and file system activity in real-time, using behavior-based detection (not signature-based) to identify suspicious activities. When threats are detected, the system automatically responds by terminating malicious processes.
