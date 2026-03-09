@@ -44,8 +44,12 @@ class BehaviorAnalyzer:
         self.cooldown_seconds = cooldown_seconds or EDRConfig.ALERT_COOLDOWN_SECONDS
 
         self.last_alert_time: Dict[int, float] = {}
-        self._keywords  = [kw.lower() for kw in EDRConfig.SUSPICIOUS_KEYWORDS]
-        self._sensitive = [p.lower() for p in EDRConfig.SENSITIVE_PATHS]
+        self._keywords   = [kw.lower() for kw in EDRConfig.SUSPICIOUS_KEYWORDS]
+        self._sensitive  = [p.lower()  for p in EDRConfig.SENSITIVE_PATHS]
+        # Bug 2: safe-process names in lower-case for O(1) lookup
+        self._safe_procs = {p.lower()  for p in EDRConfig.SAFE_PROCESSES}
+        # Spawn-rate history: track count across multiple scans (Bug 4)
+        self._spawn_history: List[int] = []
 
     # ------------------------------------------------------------------
 
@@ -62,6 +66,11 @@ class BehaviorAnalyzer:
         mem  = process.get("memory_percent", 0.0)
         open_files: List[str] = [f.lower() for f in process.get("open_files", [])]
         now  = time.time()
+
+        # Bug 2: skip safe/trusted system processes entirely
+        if name in self._safe_procs:
+            return self._result(False, EDRConfig.SEVERITY_INFO,
+                                ["Trusted process – skipped"], "NONE")
 
         # Cooldown gate
         if pid in self.last_alert_time:
@@ -133,18 +142,27 @@ class BehaviorAnalyzer:
             severity = _max_sev(severity, EDRConfig.SEVERITY_CRITICAL)
             threat_type = "SENSITIVE_FILE_ACCESS"
 
-        # ---- Rule F: Rapid spawn ------------------------------------------
+        # ---- Rule F: Rapid spawn (Bug 3 & Bug 4) --------------------------
+        # Track spawn counts across scans; only alert if threshold exceeded
+        # in the current scan AND in at least one of the last 2 scans.
         spawn_thresh = EDRConfig.SPAWN_RATE_THRESHOLD
-        if recent_spawn_count >= spawn_thresh:
+        self._spawn_history.append(recent_spawn_count)
+        if len(self._spawn_history) > 5:
+            self._spawn_history.pop(0)
+
+        if (recent_spawn_count >= spawn_thresh
+                and len(self._spawn_history) >= 2
+                and self._spawn_history[-2] >= spawn_thresh):
             reasons.append(
                 f"Rapid process spawning: {recent_spawn_count} new processes "
-                f"in {EDRConfig.SPAWN_TIME_WINDOW}s"
+                f"in {EDRConfig.SPAWN_TIME_WINDOW}s (sustained over 2 scans)"
             )
-            sev_f = (EDRConfig.SEVERITY_CRITICAL if recent_spawn_count >= spawn_thresh * 2
+            sev_f = (EDRConfig.SEVERITY_CRITICAL
+                     if recent_spawn_count >= spawn_thresh * 2
                      else EDRConfig.SEVERITY_WARNING)
             severity = _max_sev(severity, sev_f)
             if threat_type == "NONE":
-                threat_type = "PROCESS_INJECTION"
+                threat_type = "PROCESS_SPAWN_ANOMALY"  # Bug 3: renamed from PROCESS_INJECTION
 
         suspicious = len(reasons) > 0
 

@@ -37,9 +37,10 @@ class TerminalDashboard:
 
         self._alert_history: List[Dict] = []
         self._lock = threading.Lock()
-        self._total_processes_scanned: int = 0
-        self._total_suspicious: int        = 0
-        self._start_time: float            = time.time()
+        self._processes_monitored: int = 0   # Bug 1: current scan count, not cumulative
+        self._suspicious_this_scan: int = 0
+        self._total_suspicious: int     = 0  # cumulative (for trend display)
+        self._start_time: float         = time.time()
 
     def start_background_refresh(self):
         t = threading.Thread(target=self._loop, daemon=True)
@@ -84,7 +85,7 @@ class TerminalDashboard:
             f"\033[96m║\033[0m  {'System CPU:':<22} {sys_cpu:>5.1f}%{'':<29} \033[96m║\033[0m",
             f"\033[96m║\033[0m  {'System Memory:':<22} {sys_mem:>5.1f}%{'':<29} \033[96m║\033[0m",
             f"\033[96m╠{border}╣\033[0m",
-            f"\033[96m║\033[0m  {'Processes Monitored:':<30} {self._total_processes_scanned:>5}{'':<19} \033[96m║\033[0m",
+            f"\033[96m║\033[0m  {'Processes Monitored:':<30} {self._processes_monitored:>5}{'':<19} \033[96m║\033[0m",
             f"\033[96m║\033[0m  {'Suspicious Processes:':<30} {self._total_suspicious:>5}{'':<19} \033[96m║\033[0m",
             f"\033[96m║\033[0m  {'Total Alerts Raised:':<30} {total_alerts:>5}{'':<19} \033[96m║\033[0m",
             f"\033[96m║\033[0m  {'Processes Terminated:':<30} {terminated:>5}{'':<19} \033[96m║\033[0m",
@@ -120,8 +121,9 @@ class TerminalDashboard:
             if len(self._alert_history) > 100:
                 self._alert_history.pop(0)
 
-    def increment_scanned(self, count: int):
-        self._total_processes_scanned += count
+    def set_scanned(self, count: int):
+        """Bug 1 fix: set the current process count (not accumulate)."""
+        self._processes_monitored = count
 
     def increment_suspicious(self, count: int = 1):
         self._total_suspicious += count

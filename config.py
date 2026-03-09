@@ -26,8 +26,8 @@ class EDRConfig:
     MEMORY_CRITICAL_THRESHOLD = 70.0      # Memory % → CRITICAL
 
     # ===========================
-    # Protected System Processes
-    # (never terminate these)
+    # Protected System Processes (Bug 6 fix)
+    # These processes are NEVER terminated, even on CRITICAL alerts.
     # ===========================
     PROTECTED_PROCESSES = [
         "systemd", "gnome-shell", "lightdm", "xfce4-session",
@@ -36,6 +36,26 @@ class EDRConfig:
         "pulseaudio", "pipewire", "wpa_supplicant", "avahi-daemon",
         "system", "smss.exe", "csrss.exe", "wininit.exe",
         "winlogon.exe", "lsass.exe", "services.exe", "explorer.exe",
+    ]
+
+    # ===========================
+    # Safe / Trusted Processes  (Bug 2 fix)
+    # These are NEVER analyzed – trusted system/desktop processes
+    # that would otherwise generate false positives.
+    # ===========================
+    SAFE_PROCESSES = [
+        "zsh", "bash", "sh", "dash", "fish",
+        "systemd", "systemd-journal", "systemd-udevd", "systemd-logind",
+        "gnome-shell", "gnome-session", "gnome-keyring-d",
+        "xdg-desktop-portal", "xdg-desktop-por",
+        "Xorg", "xwayland",
+        "dbus-daemon", "dbus-launch",
+        "NetworkManager",
+        "lightdm", "gdm", "gdm3", "sddm",
+        "xfce4-session", "kwin_x11", "kwin_wayland", "plasmashell",
+        "pulseaudio", "pipewire", "pipewire-pulse",
+        "wpa_supplicant", "avahi-daemon",
+        "kthreadd", "kworker", "ksoftirqd",
     ]
 
     # ===========================

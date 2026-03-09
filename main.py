@@ -204,8 +204,14 @@ class LightweightEDR:
                     suspicious_in_scan   = 0
 
                     # ---- Analyze ----------------------------------------
+                    # Build safe-process set once per scan (Bug 2)
+                    _safe = {p.lower() for p in EDRConfig.SAFE_PROCESSES}
                     for proc in processes:
                         try:
+                            # Bug 2: skip trusted system processes before analyze
+                            if (proc.get("name") or "").lower() in _safe:
+                                continue
+
                             history  = self.scanner.get_process_history(proc["pid"])
                             analysis = self.analyzer.analyze(proc, history, spawn_count)
 
@@ -240,7 +246,8 @@ class LightweightEDR:
 
                     # ---- Dashboard stats --------------------------------
                     total = self.scanner.get_total_process_count()
-                    self.terminal_dash.increment_scanned(len(processes))
+                    # Bug 1: set (not accumulate) the current process count
+                    self.terminal_dash.set_scanned(len(processes))
                     self.terminal_dash.increment_suspicious(suspicious_in_scan)
 
                     if self.gui_dash:
