@@ -1,13 +1,21 @@
 """
 File System Monitor Module
-Monitors directory for rapid file changes to detect ransomware-like behavior.
+Monitors a directory for ransomware-like behavior patterns.
+
+Detects:
+  • Rapid file creation
+  • Rapid file modification
+  • Rapid file deletion / rename
+
+Alert is triggered when total events exceed FILE_EVENT_THRESHOLD
+within TIME_WINDOW seconds.
 """
 
 import os
 import time
 from pathlib import Path
-from typing import Callable, List, Tuple
-from collections import deque
+from typing import Callable, List, Dict, Optional
+from collections import deque, Counter
 
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, FileSystemEvent
@@ -15,31 +23,32 @@ from watchdog.events import FileSystemEventHandler, FileSystemEvent
 
 class RansomwareDetector(FileSystemEventHandler):
     """
-    File system event handler that detects rapid file modifications,
-    creations, deletions, and renames (ransomware-like behavior).
+    Watchdog event handler that counts rapid file operations and fires
+    an alert callback when the rate exceeds the configured threshold.
     """
 
     def __init__(
         self,
         alert_callback: Callable,
         file_change_threshold: int = 10,
-        time_window: float = 5.0
+        time_window: float = 5.0,
     ):
-        """
-        Initialize the ransomware detector.
-
-        Args:
-            alert_callback: Function to call when suspicious activity is detected
-            file_change_threshold: Number of file changes to trigger alert
-            time_window: Time window in seconds
-        """
         super().__init__()
         self.alert_callback = alert_callback
         self.file_change_threshold = file_change_threshold
         self.time_window = time_window
 
-        # Stores (timestamp, file_path, event_type)
-        self.file_changes = deque()
+        # Each entry: (timestamp, file_path, event_type)
+        self.file_changes: deque = deque()
+
+        # Per-type counters to support detailed reporting
+        self.event_type_counts: Counter = Counter()
+
+        # Last alert timestamp to avoid flooding
+        self._last_alert_time: float = 0.0
+        self._alert_cooldown: float = time_window  # don't re-alert until window expires
+
+    # ---- Watchdog callbacks -----------------------------------------------
 
     def on_created(self, event: FileSystemEvent):
         if not event.is_directory:
@@ -55,54 +64,65 @@ class RansomwareDetector(FileSystemEventHandler):
 
     def on_moved(self, event: FileSystemEvent):
         if not event.is_directory:
-            self._record_change(event.dest_path, "moved")
+            self._record_change(event.dest_path, "moved/renamed")
+
+    # ---- Internal ----------------------------------------------------------
 
     def _record_change(self, file_path: str, event_type: str):
-        """
-        Record a file system change and check for suspicious patterns.
-        """
         current_time = time.time()
+
         self.file_changes.append((current_time, file_path, event_type))
+        self.event_type_counts[event_type] += 1
 
-        # Remove old events outside the time window
+        # Evict events outside the time window
         while self.file_changes and (current_time - self.file_changes[0][0] > self.time_window):
-            self.file_changes.popleft()
+            _, _, old_type = self.file_changes.popleft()
+            self.event_type_counts[old_type] = max(0, self.event_type_counts[old_type] - 1)
 
-        # Check threshold
-        if len(self.file_changes) >= self.file_change_threshold:
-            recent_changes = list(self.file_changes)
-            self.alert_callback(recent_changes, file_path)
-
-            # Reset to prevent repeated alerts for same burst
+        # Alert if threshold exceeded and we're past the cooldown
+        if (
+            len(self.file_changes) >= self.file_change_threshold
+            and (current_time - self._last_alert_time) >= self._alert_cooldown
+        ):
+            self._last_alert_time = current_time
+            summary = dict(self.event_type_counts)
+            recent = list(self.file_changes)
             self.file_changes.clear()
+            self.event_type_counts.clear()
+
+            self.alert_callback(recent, file_path, summary)
+
+    def get_current_stats(self) -> Dict:
+        """Return a snapshot of current activity inside the time window."""
+        return {
+            "events_in_window": len(self.file_changes),
+            "threshold": self.file_change_threshold,
+            "time_window_seconds": self.time_window,
+            "event_types": dict(self.event_type_counts),
+        }
 
 
 class FileMonitor:
     """
-    Monitors a directory for ransomware-like file system activity.
+    Manages a Watchdog Observer and exposes high-level methods for the EDR.
     """
 
     def __init__(
         self,
-        monitor_path: str = None,
-        file_change_threshold: int = 10,
-        time_window: float = 5.0
+        monitor_path: Optional[str] = None,
+        file_change_threshold: Optional[int] = None,
+        time_window: Optional[float] = None,
     ):
-        """
-        Initialize the file monitor.
+        from config import EDRConfig
 
-        Args:
-            monitor_path: Directory path to monitor
-            file_change_threshold: Number of changes to trigger alert
-            time_window: Time window in seconds
-        """
         if monitor_path is None:
-            monitor_path = os.getcwd()
+            monitor_path = EDRConfig.MONITOR_DIRECTORY
+
+        file_change_threshold = file_change_threshold or EDRConfig.FILE_EVENT_THRESHOLD
+        time_window = time_window or EDRConfig.TIME_WINDOW
 
         self.monitor_path = Path(monitor_path).resolve()
-
-        if not self.monitor_path.exists():
-            self.monitor_path.mkdir(parents=True, exist_ok=True)
+        self.monitor_path.mkdir(parents=True, exist_ok=True)
 
         if not self.monitor_path.is_dir():
             raise ValueError(f"Monitor path must be a directory: {self.monitor_path}")
@@ -110,55 +130,68 @@ class FileMonitor:
         self.file_change_threshold = file_change_threshold
         self.time_window = time_window
 
-        self.observer: Observer | None = None
-        self.detector: RansomwareDetector | None = None
-        self.alert_callback: Callable | None = None
+        self._observer: Optional[Observer] = None
+        self._detector: Optional[RansomwareDetector] = None
+        self._alert_callback: Optional[Callable] = None
+
+        # Cumulative stats
+        self.total_file_alerts: int = 0
+        self.total_file_events: int = 0
+
+    # ---- Public API -------------------------------------------------------
 
     def set_alert_callback(self, callback: Callable):
         """
-        Set the callback function for alerts.
-
-        Args:
-            callback: Function that takes (changes_list, trigger_file)
+        Set handler called when suspicious file activity is detected.
+        Signature: callback(changes: list, trigger_file: str, summary: dict)
         """
-        self.alert_callback = callback
+        self._alert_callback = callback
 
     def start(self):
-        """Start monitoring the directory."""
-        if self.alert_callback is None:
-            raise ValueError("Alert callback must be set before starting monitor")
+        """Begin watching the configured directory."""
+        if self._alert_callback is None:
+            raise ValueError("An alert callback must be set before starting the file monitor.")
 
-        self.detector = RansomwareDetector(
-            self.alert_callback,
-            self.file_change_threshold,
-            self.time_window
+        # Wrap callback to update stats before passing to user handler
+        def _wrapped_callback(changes: list, trigger_file: str, summary: dict):
+            self.total_file_alerts += 1
+            self.total_file_events += len(changes)
+            self._alert_callback(changes, trigger_file, summary)
+
+        self._detector = RansomwareDetector(
+            alert_callback=_wrapped_callback,
+            file_change_threshold=self.file_change_threshold,
+            time_window=self.time_window,
         )
 
-        self.observer = Observer()
-        self.observer.schedule(
-            self.detector,
-            str(self.monitor_path),
-            recursive=True
-        )
-        self.observer.start()
+        self._observer = Observer()
+        self._observer.schedule(self._detector, str(self.monitor_path), recursive=True)
+        self._observer.start()
 
-        print(f"[FILE MONITOR] Monitoring directory: {self.monitor_path}")
+        print(f"[FILE MONITOR] Watching: {self.monitor_path}")
         print(
-            f"[FILE MONITOR] Alert if ≥ {self.file_change_threshold} events "
-            f"within {self.time_window} seconds"
+            f"[FILE MONITOR] Alert threshold: "
+            f"{self.file_change_threshold} events within {self.time_window}s"
         )
 
     def stop(self):
-        """Stop monitoring the directory."""
-        if self.observer:
-            self.observer.stop()
-            self.observer.join()
-            print("[FILE MONITOR] Monitoring stopped")
+        """Stop the watchdog observer."""
+        if self._observer:
+            self._observer.stop()
+            self._observer.join()
+            print("[FILE MONITOR] Stopped.")
 
     def is_running(self) -> bool:
-        """Check if the monitor is currently running."""
-        return self.observer is not None and self.observer.is_alive()
+        return self._observer is not None and self._observer.is_alive()
 
     def get_monitored_path(self) -> str:
-        """Return monitored directory path."""
         return str(self.monitor_path)
+
+    def get_stats(self) -> Dict:
+        """Return cumulative file-monitor statistics."""
+        current = self._detector.get_current_stats() if self._detector else {}
+        return {
+            "total_alerts": self.total_file_alerts,
+            "total_events": self.total_file_events,
+            "current_window": current,
+        }
