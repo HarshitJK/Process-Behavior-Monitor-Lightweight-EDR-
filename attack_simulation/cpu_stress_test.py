@@ -1,102 +1,107 @@
 """
-Attack Simulation Script 1: CPU Stress Test
-===========================================
-Simulates a process consuming abnormally high CPU for an extended period.
-This should trigger the Lightweight EDR's:
-  - Rule A: High CPU usage (WARNING)
-  - Rule C: Sustained high CPU for N consecutive checks (CRITICAL → auto-terminate)
+Attack Simulation: CPU Stress Test
+Triggers EDR Rule A (High CPU → WARNING) and Rule C (Sustained → CRITICAL).
 
-Usage (in WSL / Linux terminal):
+Issue 5 fix:
+  - Uses multiprocessing so each worker is a SEPARATE process visible to psutil
+  - Each worker runs a genuine 10-million-iteration inner loop
+  - Workers all start simultaneously to guarantee > 90% CPU
+
+Usage:
   python attack_simulation/cpu_stress_test.py
-  python attack_simulation/cpu_stress_test.py --duration 30 --cores 2
-
-IMPORTANT:
-  Run the EDR first in a separate terminal:
-    python main.py --no-terminate    # alert-only (safe for demo)
-    python main.py                   # with auto-terminate
+  python attack_simulation/cpu_stress_test.py --duration 45 --workers 4
 """
 
 import argparse
-import time
-import threading
+import multiprocessing
 import os
 import sys
+import time
 
-# Make sure we can import from the project root
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
     from config import EDRConfig
-    THRESHOLD = EDRConfig.CPU_THRESHOLD
+    THRESHOLD   = EDRConfig.CPU_THRESHOLD
     CONSECUTIVE = EDRConfig.CPU_CONSECUTIVE_CHECKS
-    SCAN_INTERVAL = EDRConfig.SCAN_INTERVAL
+    INTERVAL    = EDRConfig.SCAN_INTERVAL
 except ImportError:
-    THRESHOLD = 80.0
-    CONSECUTIVE = 5
-    SCAN_INTERVAL = 2.0
+    THRESHOLD   = 80.0
+    CONSECUTIVE = 3
+    INTERVAL    = 2.0
 
 
-def cpu_burn(stop_event: threading.Event):
-    """Tight computation loop to saturate a CPU core."""
-    while not stop_event.is_set():
-        _ = sum(i * i for i in range(100_000))
+# ---------------------------------------------------------------------------
+# Worker (runs as separate process – fully visible to psutil)
+# ---------------------------------------------------------------------------
 
+def _cpu_worker(duration: int):
+    """Burn CPU in a tight loop for `duration` seconds."""
+    deadline = time.time() + duration
+    while time.time() < deadline:
+        x = 0
+        for i in range(10_000_000):
+            x += i * i    # real arithmetic, can't be optimised away
+    # Done – exit naturally so the OS reclaims it
+
+
+# ---------------------------------------------------------------------------
 
 def main():
     parser = argparse.ArgumentParser(
-        description="CPU Stress Simulator – triggers EDR CPU alerts"
+        description="CPU Stress Test – triggers EDR CPU alerts"
     )
-    parser.add_argument(
-        "--duration", type=int, default=30,
-        help="Seconds to run the stress test (default: 30)"
-    )
-    parser.add_argument(
-        "--cores", type=int, default=1,
-        help="Number of CPU cores to stress (default: 1)"
-    )
+    parser.add_argument("--duration", type=int, default=30,
+                        help="Seconds to run (default: 30)")
+    parser.add_argument("--workers", type=int,
+                        default=max(1, multiprocessing.cpu_count()),
+                        help="Parallel worker processes (default: all cores)")
     args = parser.parse_args()
 
-    # Estimated time before EDR triggers CRITICAL
-    estimated_trigger = CONSECUTIVE * SCAN_INTERVAL
+    estimated_trigger = CONSECUTIVE * INTERVAL
 
     print("=" * 60)
     print("  CPU STRESS TEST – Lightweight EDR Attack Simulation")
     print("=" * 60)
-    print(f"  PID             : {os.getpid()}")
-    print(f"  Duration        : {args.duration}s")
-    print(f"  CPU cores       : {args.cores}")
-    print(f"  EDR threshold   : {THRESHOLD}%")
-    print(f"  EDR consecutive : {CONSECUTIVE} checks")
-    print(f"  Expected alert  : ~{estimated_trigger:.0f}s after start")
+    print(f"  Main PID         : {os.getpid()}")
+    print(f"  Worker processes : {args.workers}")
+    print(f"  Duration         : {args.duration}s")
+    print(f"  EDR CPU Warning  : {THRESHOLD}%")
+    print(f"  EDR Consecutive  : {CONSECUTIVE} scans  (~{estimated_trigger:.0f}s to CRITICAL)")
     print("=" * 60)
-    print("\n[*] Starting CPU stress …")
-    print("[*] Watch the EDR terminal for [WARNING] and [CRITICAL] alerts!\n")
+    print("\n[*] Spawning worker processes …")
+    print("[*] Watch the EDR terminal for [WARNING] then [CRITICAL] alerts!\n")
 
-    stop = threading.Event()
-    threads = [
-        threading.Thread(target=cpu_burn, args=(stop,), daemon=True)
-        for _ in range(args.cores)
-    ]
+    workers = []
+    for _ in range(args.workers):
+        p = multiprocessing.Process(target=_cpu_worker, args=(args.duration,),
+                                    daemon=True)
+        p.start()
+        workers.append(p)
+        print(f"  [+] Worker PID {p.pid} started")
 
-    for t in threads:
-        t.start()
-
+    print()
     try:
         for elapsed in range(args.duration):
             time.sleep(1)
-            bar = "#" * (elapsed + 1) + "-" * (args.duration - elapsed - 1)
-            pct = int((elapsed + 1) / args.duration * 100)
-            print(f"\r  [{bar}] {pct:3d}%  {elapsed+1:3d}/{args.duration}s", end="", flush=True)
+            alive = sum(1 for w in workers if w.is_alive())
+            bar   = "█" * (elapsed + 1) + "░" * (args.duration - elapsed - 1)
+            print(f"\r  [{bar}] {elapsed + 1:3d}/{args.duration}s  ({alive} workers running)",
+                  end="", flush=True)
     except KeyboardInterrupt:
-        print("\n[!] Interrupted by user.")
+        print("\n[!] Interrupted.")
     finally:
-        stop.set()
-        for t in threads:
-            t.join(timeout=1)
+        for w in workers:
+            if w.is_alive():
+                w.terminate()
+        for w in workers:
+            w.join(timeout=2)
 
     print("\n\n[✓] CPU stress test complete.")
-    print("    Check the EDR terminal – it should have logged a CRITICAL alert.")
+    print("    Check the EDR terminal – should show WARNING + CRITICAL alerts.")
 
 
 if __name__ == "__main__":
+    # Required on Windows for multiprocessing
+    multiprocessing.freeze_support()
     main()

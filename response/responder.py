@@ -1,15 +1,14 @@
 """
-Response Module
-Handles threat alerts, response actions, and structured logging.
+Response Module – Lightweight EDR
+Handles alerts, process actions, and structured/event logging.
 
-Supported Response Actions:
-  ALERT_ONLY       – print alert, write log, do nothing to the process
-  TERMINATE_PROCESS – graceful terminate → force kill if needed
-  SUSPEND_PROCESS   – send SIGSTOP (Linux/macOS) or pause (Windows)
+Actions:
+  ALERT_ONLY       – print + log, no process change
+  TERMINATE_PROCESS – graceful terminate → force kill
+  SUSPEND_PROCESS   – SIGSTOP (Linux/macOS)
 
-Log formats:
-  logs/edr.log            – human-readable pipe-delimited
-  logs/edr_structured.json – JSON-lines (one JSON object per line)
+Issue 3 fix: checks PROTECTED_PROCESSES before terminating.
+Issue 7 fix: writes human-friendly edr_events.log in addition to edr.log.
 """
 
 import os
@@ -23,65 +22,55 @@ from typing import Dict, List, Optional
 from pathlib import Path
 from config import EDRConfig
 
-
-# ---------------------------------------------------------------------------
-# Severity → ANSI colour map (for terminal output)
-# ---------------------------------------------------------------------------
-_COLOUR = {
-    "INFO":     "\033[94m",   # blue
-    "WARNING":  "\033[93m",   # yellow
-    "CRITICAL": "\033[91m",   # red
+# ANSI colours
+_C = {
+    "INFO":     "\033[94m",
+    "WARNING":  "\033[93m",
+    "CRITICAL": "\033[91m",
     "RESET":    "\033[0m",
 }
 
 
-def _coloured(severity: str, text: str) -> str:
+def _col(sev: str, text: str) -> str:
     if sys.stdout.isatty():
-        return f"{_COLOUR.get(severity, '')}{text}{_COLOUR['RESET']}"
+        return f"{_C.get(sev, '')}{text}{_C['RESET']}"
     return text
 
 
-# ---------------------------------------------------------------------------
 class Responder:
-    """
-    Centralized incident response handler.
 
-    Responsibilities:
-      1. Print formatted alerts to the terminal (with ANSI colors when supported)
-      2. Write pipe-delimited log entries to logs/edr.log
-      3. Write structured JSON entries to logs/edr_structured.json
-      4. Take configurable action: alert-only, suspend, or terminate
-    """
-
-    def __init__(
-        self,
-        log_file: Optional[str] = None,
-        json_log_file: Optional[str] = None,
-    ):
-        self.log_file = log_file or EDRConfig.LOG_FILE
+    def __init__(self, log_file: Optional[str] = None,
+                 json_log_file: Optional[str] = None):
+        self.log_file      = log_file      or EDRConfig.LOG_FILE
         self.json_log_file = json_log_file or EDRConfig.JSON_LOG_FILE
+        self.events_log    = EDRConfig.EVENTS_LOG
 
-        # Make sure the log directory exists
-        Path(self.log_file).parent.mkdir(parents=True, exist_ok=True)
-        Path(self.json_log_file).parent.mkdir(parents=True, exist_ok=True)
+        # Ensure log directory exists
+        for p in [self.log_file, self.json_log_file, self.events_log]:
+            Path(p).parent.mkdir(parents=True, exist_ok=True)
 
-        # Python logging (plain-text)
+        # Python logger (pipe-delimited)
         self.logger = logging.getLogger("EDR")
         if not self.logger.handlers:
             self.logger.setLevel(logging.INFO)
-            handler = logging.FileHandler(self.log_file, encoding="utf-8")
-            handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s",
-                                                   datefmt="%Y-%m-%d %H:%M:%S"))
-            self.logger.addHandler(handler)
+            h = logging.FileHandler(self.log_file, encoding="utf-8")
+            h.setFormatter(logging.Formatter(
+                "%(asctime)s | %(levelname)s | %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S"
+            ))
+            self.logger.addHandler(h)
 
         # Runtime counters
-        self.total_alerts: int = 0
+        self.total_alerts: int     = 0
         self.total_terminated: int = 0
-        self.total_suspended: int = 0
+        self.total_suspended: int  = 0
 
-    # -----------------------------------------------------------------------
-    # Public – Process Threats
-    # -----------------------------------------------------------------------
+        # Protected process names (lower-cased for fast lookup)
+        self._protected = {p.lower() for p in EDRConfig.PROTECTED_PROCESSES}
+
+    # ------------------------------------------------------------------
+    # Process threat handler
+    # ------------------------------------------------------------------
 
     def handle_process_threat(
         self,
@@ -90,51 +79,42 @@ class Responder:
         severity: str = "WARNING",
         threat_type: str = "UNKNOWN",
     ):
-        """
-        Respond to a suspicious process.
-
-        Decision logic:
-          CRITICAL + AUTO_TERMINATE  → terminate
-          WARNING  + SUSPEND_ON_WARNING (Linux) → suspend
-          otherwise                   → alert only
-        """
-        pid = process.get("pid")
-        name = process.get("name", "unknown")
-        cpu = process.get("cpu_percent", 0.0)
+        pid    = process.get("pid")
+        name   = process.get("name", "unknown")
+        cpu    = process.get("cpu_percent",    0.0)
         memory = process.get("memory_percent", 0.0)
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ts     = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         reason_text = "; ".join(reasons)
 
         self.total_alerts += 1
 
-        # ---- Determine action -------------------------------------------
+        # Decide action
         action_type = EDRConfig.ACTION_ALERT_ONLY
         if severity == EDRConfig.SEVERITY_CRITICAL and EDRConfig.AUTO_TERMINATE:
             action_type = EDRConfig.ACTION_TERMINATE
         elif severity == EDRConfig.SEVERITY_WARNING and EDRConfig.SUSPEND_ON_WARNING:
             action_type = EDRConfig.ACTION_SUSPEND
 
-        # ---- Terminal output --------------------------------------------
+        # Terminal output
         border = "=" * 60
-        tag = f"[{severity}]"
-        print(f"\n{_coloured(severity, border)}")
-        print(_coloured(severity, f"{tag} SUSPICIOUS PROCESS DETECTED"))
-        print(_coloured(severity, border))
+        print(f"\n{_col(severity, border)}")
+        print(_col(severity, f"[{severity}] SUSPICIOUS PROCESS DETECTED"))
+        print(_col(severity, border))
         print(f"  Timestamp  : {ts}")
         print(f"  PID        : {pid}")
         print(f"  Process    : {name}")
         print(f"  CPU        : {cpu:.1f}%")
         print(f"  Memory     : {memory:.1f}%")
-        print(f"  Severity   : {_coloured(severity, severity)}")
+        print(f"  Severity   : {_col(severity, severity)}")
         print(f"  Threat Type: {threat_type}")
         print(f"  Reason     : {reason_text}")
         print(f"  Action     : {action_type}")
-        print(_coloured(severity, border))
+        print(_col(severity, border))
 
-        # ---- Perform action ---------------------------------------------
+        # Perform action
         action_result = self._take_action(action_type, pid, name)
 
-        # ---- Text log ---------------------------------------------------
+        # Pipe-delimited log
         log_line = (
             f"{severity} | PROCESS | PID={pid} | NAME={name} | "
             f"CPU={cpu:.1f}% | MEM={memory:.1f}% | "
@@ -148,7 +128,10 @@ class Responder:
         else:
             self.logger.info(log_line)
 
-        # ---- JSON log ---------------------------------------------------
+        # Human-friendly event log (Issue 7)
+        self._write_event_log(ts, severity, name, pid, cpu, memory)
+
+        # JSON log
         self._write_json({
             "timestamp": ts,
             "alert_type": "process",
@@ -156,15 +139,15 @@ class Responder:
             "threat_type": threat_type,
             "pid": pid,
             "process_name": name,
-            "cpu_percent": round(cpu, 2),
+            "cpu_percent":    round(cpu,    2),
             "memory_percent": round(memory, 2),
             "reasons": reasons,
             "action_taken": action_result,
         })
 
-    # -----------------------------------------------------------------------
-    # Public – File System Threats
-    # -----------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # File threat handler
+    # ------------------------------------------------------------------
 
     def handle_file_threat(
         self,
@@ -172,14 +155,6 @@ class Responder:
         trigger_file: str,
         summary: Optional[Dict] = None,
     ):
-        """
-        Respond to ransomware-like file activity.
-
-        Args:
-            changes:      list of (timestamp, file_path, event_type) tuples
-            trigger_file: the file that exceeded the threshold
-            summary:      optional dict of event_type → count
-        """
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         total_events = len(changes)
         summary = summary or {}
@@ -187,22 +162,24 @@ class Responder:
         self.total_alerts += 1
 
         border = "=" * 60
-        print(f"\n{_coloured('CRITICAL', border)}")
-        print(_coloured("CRITICAL", "[CRITICAL] RANSOMWARE-LIKE FILE ACTIVITY DETECTED"))
-        print(_coloured("CRITICAL", border))
-        print(f"  Timestamp     : {ts}")
-        print(f"  Trigger file  : {trigger_file}")
-        print(f"  Total events  : {total_events}")
-        if summary:
-            for etype, count in summary.items():
-                print(f"  {etype.capitalize():12s}: {count}")
-        print(_coloured("CRITICAL", border))
+        print(f"\n{_col('CRITICAL', border)}")
+        print(_col("CRITICAL", "[CRITICAL] RANSOMWARE-LIKE FILE ACTIVITY DETECTED"))
+        print(_col("CRITICAL", border))
+        print(f"  Timestamp    : {ts}")
+        print(f"  Trigger file : {trigger_file}")
+        print(f"  Total events : {total_events}")
+        for etype, count in summary.items():
+            print(f"  {etype.capitalize():12s}: {count}")
+        print(_col("CRITICAL", border))
 
         log_line = (
-            f"CRITICAL | FILE_SYSTEM | Events={total_events} | "
+            f"CRITICAL | FILE | Events={total_events} | "
             f"Trigger={trigger_file} | Types={summary}"
         )
         self.logger.critical(log_line)
+
+        self._write_event_log(ts, "CRITICAL", "FILE_SYSTEM", 0,
+                              0, 0, extra=f"Events={total_events} Trigger={trigger_file}")
 
         self._write_json({
             "timestamp": ts,
@@ -219,12 +196,11 @@ class Responder:
             "action_taken": "Alert logged – manual investigation required",
         })
 
-    # -----------------------------------------------------------------------
-    # Public – Read recent alerts from JSON log
-    # -----------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Stats / recent alerts
+    # ------------------------------------------------------------------
 
     def get_recent_alerts(self, count: int = 20) -> List[Dict]:
-        """Return the most recent *count* alerts from the JSON log."""
         alerts = []
         try:
             if os.path.exists(self.json_log_file):
@@ -240,31 +216,36 @@ class Responder:
         return alerts
 
     def get_stats(self) -> Dict:
-        """Return runtime response statistics."""
         return {
-            "total_alerts": self.total_alerts,
+            "total_alerts":     self.total_alerts,
             "total_terminated": self.total_terminated,
-            "total_suspended": self.total_suspended,
+            "total_suspended":  self.total_suspended,
         }
 
-    # -----------------------------------------------------------------------
-    # Internal – Action dispatch
-    # -----------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Action dispatch
+    # ------------------------------------------------------------------
 
     def _take_action(self, action_type: str, pid: int, name: str) -> str:
         if action_type == EDRConfig.ACTION_TERMINATE:
-            result = self._terminate_process(pid, name)
-            return result
+            return self._terminate_process(pid, name)
         elif action_type == EDRConfig.ACTION_SUSPEND:
-            result = self._suspend_process(pid, name)
-            return result
-        else:
-            return "Alert logged – no process action taken"
+            return self._suspend_process(pid, name)
+        return "Alert logged – no process action taken"
+
+    def _is_protected(self, name: str) -> bool:
+        """Return True if process name is in the protected list (Issue 3)."""
+        return name.lower() in self._protected
 
     def _terminate_process(self, pid: int, name: str) -> str:
-        """Attempt graceful termination then force-kill."""
-        if EDRConfig.DEBUG_MODE:
-            print(f"[DEBUG] Attempting to terminate PID {pid} ({name})")
+        """Safe terminate with protected-process guard (Issue 3 fix)."""
+        # ---- Protected-process check (Issue 3) ----------------------------
+        if self._is_protected(name):
+            msg = f"Skipped termination – '{name}' is a protected system process"
+            self.logger.warning(f"PROTECTED | PID={pid} | {msg}")
+            print(f"  [SKIPPED] {msg}")
+            return msg
+
         try:
             proc = psutil.Process(pid)
             if not proc.is_running():
@@ -276,7 +257,7 @@ class Responder:
                 result = f"Process '{name}' (PID {pid}) terminated gracefully"
                 self.logger.info(f"ACTION | {result}")
                 self.total_terminated += 1
-                print(f"  [ACTION] {_coloured('CRITICAL', result)}")
+                print(f"  [ACTION] {_col('CRITICAL', result)}")
                 return result
             except psutil.TimeoutExpired:
                 proc.kill()
@@ -284,16 +265,16 @@ class Responder:
                     proc.wait(timeout=2)
                 except psutil.TimeoutExpired:
                     pass
-                result = f"Process '{name}' (PID {pid}) force-killed (graceful timeout)"
+                result = f"Process '{name}' (PID {pid}) force-killed"
                 self.logger.warning(f"ACTION | {result}")
                 self.total_terminated += 1
-                print(f"  [ACTION] {_coloured('CRITICAL', result)}")
+                print(f"  [ACTION] {_col('CRITICAL', result)}")
                 return result
 
         except psutil.NoSuchProcess:
             return f"PID {pid} no longer exists"
         except psutil.AccessDenied:
-            msg = f"Access denied terminating PID {pid} – run with sudo/admin rights"
+            msg = f"Access denied terminating PID {pid} – run with sudo"
             self.logger.error(f"ACTION FAILED | {msg}")
             print(f"  [ACTION] {msg}")
             return msg
@@ -303,27 +284,45 @@ class Responder:
             return msg
 
     def _suspend_process(self, pid: int, name: str) -> str:
-        """Suspend a process (SIGSTOP on Linux, resume with SIGCONT)."""
+        if self._is_protected(name):
+            return f"Skipped suspend – '{name}' is protected"
         try:
-            proc = psutil.Process(pid)
             if sys.platform != "win32":
                 os.kill(pid, signal.SIGSTOP)
                 result = f"Process '{name}' (PID {pid}) suspended (SIGSTOP)"
             else:
-                # Windows: no direct equivalent – freeze via debug API would need ctypes
-                result = f"Suspend not supported on Windows for PID {pid}; alert only"
+                result = f"Suspend not supported on Windows for PID {pid}"
             self.logger.warning(f"ACTION | {result}")
             self.total_suspended += 1
             print(f"  [ACTION] {result}")
             return result
         except (psutil.NoSuchProcess, psutil.AccessDenied, OSError) as exc:
-            msg = f"Failed to suspend PID {pid}: {exc}"
-            self.logger.error(f"ACTION FAILED | {msg}")
-            return msg
+            return f"Failed to suspend PID {pid}: {exc}"
 
-    # -----------------------------------------------------------------------
-    # Internal – Logging
-    # -----------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Logging helpers
+    # ------------------------------------------------------------------
+
+    def _write_event_log(self, ts: str, severity: str, name: str,
+                         pid: int, cpu: float, memory: float,
+                         extra: str = ""):
+        """Write human-readable alert entry to edr_events.log (Issue 7)."""
+        try:
+            line = (
+                f"[{ts}] ALERT\n"
+                f"  Severity : {severity}\n"
+                f"  Process  : {name}\n"
+                f"  PID      : {pid}\n"
+                f"  CPU      : {cpu:.1f}%\n"
+                f"  Memory   : {memory:.1f}%\n"
+            )
+            if extra:
+                line += f"  Details  : {extra}\n"
+            line += "\n"
+            with open(self.events_log, "a", encoding="utf-8") as f:
+                f.write(line)
+        except Exception as exc:
+            self.logger.error(f"Event log write failed: {exc}")
 
     def _write_json(self, data: Dict):
         try:

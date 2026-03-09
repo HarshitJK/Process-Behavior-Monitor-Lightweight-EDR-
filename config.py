@@ -1,54 +1,61 @@
 """
-Configuration Module
-Centralized configuration for the Lightweight EDR system.
-All detection thresholds and settings are adjustable here.
+Configuration Module – Lightweight EDR
+All detection thresholds and tunable settings in one place.
 """
 
 import os
 
 
 class EDRConfig:
-    """
-    Centralized configuration for all EDR components.
-    Modify these values to tune detection sensitivity.
-    """
 
     # ===========================
-    # Process Monitoring Config
+    # Process Monitoring
     # ===========================
-    SCAN_INTERVAL = 2.0          # Seconds between process scans (1-2 recommended)
+    SCAN_INTERVAL = 2.0           # Seconds between process scans
 
     # ===========================
     # Detection Thresholds
     # ===========================
-    CPU_THRESHOLD = 80.0         # CPU usage % to flag a process as suspicious
-    CPU_CONSECUTIVE_CHECKS = 5   # How many consecutive high-CPU scans before alerting
-    COMBINED_CPU_THRESHOLD = 50.0  # CPU% used in combined CPU+Memory check
+    CPU_THRESHOLD = 80.0          # CPU % → WARNING
+    CPU_CRITICAL_THRESHOLD = 90.0 # CPU % → CRITICAL (instant, no consecutive needed)
+    CPU_CONSECUTIVE_CHECKS = 3    # Consecutive scans above CPU_THRESHOLD → CRITICAL
+    COMBINED_CPU_THRESHOLD = 50.0
 
-    # Memory thresholds (independent detection)
-    MEMORY_THRESHOLD = 30.0              # Legacy/combined check threshold
-    MEMORY_WARNING_THRESHOLD = 50.0      # Memory % → WARNING
-    MEMORY_CRITICAL_THRESHOLD = 70.0     # Memory % → CRITICAL
+    MEMORY_THRESHOLD = 30.0               # Legacy alias
+    MEMORY_WARNING_THRESHOLD = 50.0       # Memory % → WARNING
+    MEMORY_CRITICAL_THRESHOLD = 70.0      # Memory % → CRITICAL
+
+    # ===========================
+    # Protected System Processes
+    # (never terminate these)
+    # ===========================
+    PROTECTED_PROCESSES = [
+        "systemd", "gnome-shell", "lightdm", "xfce4-session",
+        "dbus-daemon", "NetworkManager", "Xorg", "X", "gdm",
+        "gdm3", "sddm", "plasmashell", "kwin_x11", "kwin_wayland",
+        "pulseaudio", "pipewire", "wpa_supplicant", "avahi-daemon",
+        "system", "smss.exe", "csrss.exe", "wininit.exe",
+        "winlogon.exe", "lsass.exe", "services.exe", "explorer.exe",
+    ]
 
     # ===========================
     # Suspicious Process Names
     # ===========================
-    # Processes whose names contain these keywords will be flagged
     SUSPICIOUS_KEYWORDS = [
         "crypto", "miner", "xmrig", "malware",
         "hacktool", "rootkit", "ransomware", "keylogger",
         "trojan", "exploit", "payload", "reverse_shell",
-        "nc.exe", "netcat", "mimikatz",
+        "nc.exe", "netcat", "mimikatz", "fake_malware",
     ]
 
     # ===========================
-    # Process Spawn Rate Detection
+    # Spawn Rate Detection
     # ===========================
-    SPAWN_RATE_THRESHOLD = 20    # Number of new processes in TIME_WINDOW to trigger alert
-    SPAWN_TIME_WINDOW = 5.0      # Seconds to watch for rapid process spawning
+    SPAWN_RATE_THRESHOLD = 20
+    SPAWN_TIME_WINDOW = 5.0
 
     # ===========================
-    # Sensitive File/Path Access
+    # Sensitive File Paths
     # ===========================
     SENSITIVE_PATHS = [
         "/etc/passwd", "/etc/shadow", "/etc/sudoers",
@@ -60,60 +67,58 @@ class EDRConfig:
     # ===========================
     # Alert Cooldown
     # ===========================
-    ALERT_COOLDOWN_SECONDS = 30  # Suppress repeat alerts for same PID within this window
+    ALERT_COOLDOWN_SECONDS = 20   # Shorter cooldown so simulations trigger quickly
 
     # ===========================
-    # File Monitoring Config
+    # File Monitoring
     # ===========================
-    FILE_EVENT_THRESHOLD = 10    # File events needed to trigger ransomware alert
-    FILE_CHANGE_THRESHOLD = 10   # Alias kept for backwards compatibility
-    TIME_WINDOW = 5.0            # Time window in seconds for file event counting
-    FILE_TIME_WINDOW = 5.0       # Alias kept for backwards compatibility
-    MONITOR_DIRECTORY = "testing_malware"  # Directory watched by file monitor
+    FILE_EVENT_THRESHOLD = 10
+    FILE_CHANGE_THRESHOLD = 10    # alias
+    TIME_WINDOW = 5.0
+    FILE_TIME_WINDOW = 5.0        # alias
+    MONITOR_DIRECTORY = "testing_malware"
 
     # ===========================
-    # Response Config
+    # Response
     # ===========================
-    AUTO_TERMINATE = True         # Automatically terminate CRITICAL processes
-    GRACEFUL_TIMEOUT = 3          # Seconds to wait for graceful termination before force-kill
-    SUSPEND_ON_WARNING = False    # Suspend (SIGSTOP) process on WARNING (Linux only)
+    AUTO_TERMINATE = True
+    GRACEFUL_TIMEOUT = 3
+    SUSPEND_ON_WARNING = False
 
-    # ===========================
-    # Response Action Types
-    # ===========================
     ACTION_ALERT_ONLY = "ALERT_ONLY"
-    ACTION_TERMINATE = "TERMINATE_PROCESS"
-    ACTION_SUSPEND = "SUSPEND_PROCESS"
+    ACTION_TERMINATE  = "TERMINATE_PROCESS"
+    ACTION_SUSPEND    = "SUSPEND_PROCESS"
 
     # ===========================
-    # Debug Config
+    # Debug
     # ===========================
-    DEBUG_MODE = False            # Set True for verbose detection output
+    DEBUG_MODE = False
 
     # ===========================
-    # Logging Config
+    # Logging
     # ===========================
-    LOG_DIR = "logs"
-    LOG_FILE = "logs/edr.log"
+    LOG_DIR      = "logs"
+    LOG_FILE     = "logs/edr.log"
     JSON_LOG_FILE = "logs/edr_structured.json"
-    LOG_LEVEL = "INFO"
+    EVENTS_LOG   = "logs/edr_events.log"   # human-friendly event log (Issue 7)
+    LOG_LEVEL    = "INFO"
 
     # ===========================
-    # Severity Levels
+    # Severity
     # ===========================
-    SEVERITY_INFO = "INFO"
-    SEVERITY_WARNING = "WARNING"
+    SEVERITY_INFO     = "INFO"
+    SEVERITY_WARNING  = "WARNING"
     SEVERITY_CRITICAL = "CRITICAL"
 
     # ===========================
-    # GUI Config
+    # GUI
     # ===========================
-    GUI_REFRESH_INTERVAL = 2000   # ms between dashboard refreshes
-    GUI_TOP_PROCESSES = 10        # Top-N processes shown by CPU
-    GUI_MAX_ALERTS = 50           # Max alerts kept in memory for display
-    GUI_MAX_LOGS = 200            # Max log lines displayed in GUI
+    GUI_REFRESH_INTERVAL = 2000
+    GUI_TOP_PROCESSES    = 10
+    GUI_MAX_ALERTS       = 50
+    GUI_MAX_LOGS         = 200
 
     # ===========================
-    # Terminal Dashboard (no-GUI mode)
+    # Terminal Dashboard
     # ===========================
-    TERMINAL_DASHBOARD_INTERVAL = 5  # Seconds between terminal dashboard redraws
+    TERMINAL_DASHBOARD_INTERVAL = 5
