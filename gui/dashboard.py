@@ -1,17 +1,16 @@
 """
 Dashboard Module – Lightweight EDR
 
-Two modes:
-  1. Terminal dashboard  (python main.py)
-  2. Tkinter GUI         (python main.py --gui)
+Two modes (mutually exclusive):
+  1. TerminalDashboard  – CLI mode only (python main.py)
+     Prints a live status box every TERMINAL_DASHBOARD_INTERVAL seconds.
+     Never started when --gui is active.
 
-Issue 1 fix: btn() now accepts **kwargs so state=tk.DISABLED works.
-Issue 2 fix: GUI mainloop runs in the MAIN thread; monitoring runs in a
-             background thread managed by LightweightEDR.
-Issue 4 fix: Live process counts read directly from psutil each refresh.
-Issue 8 fix: Stats bar shows sys CPU, sys RAM, processes, suspicious,
-             alerts, terminated, file alerts.
-Issue 9 fix: All GUI update callbacks wrapped in try/except.
+  2. EDRDashboard – GUI mode only (python main.py --gui)
+     Tkinter window. mainloop() runs in the main thread.
+     Monitoring engine runs in a background thread.
+     GUI updates via root.after() – never blocks the event loop.
+     Thread-safe queue draining happens on every after() tick.
 """
 
 import sys
@@ -364,6 +363,9 @@ class EDRDashboard:
     # ------------------------------------------------------------------
 
     def _schedule_refresh(self):
+        """Periodic GUI refresh – uses root.after() so it never blocks the event loop."""
+        if not self._is_alive():
+            return   # window has been destroyed; stop the chain
         try:
             self._flush_queues()
             self._update_clock()
@@ -371,8 +373,16 @@ class EDRDashboard:
             self._update_stat_counts()
         except Exception:
             pass
-        if self.root:
+        # Re-arm only if window is still alive (point 9)
+        if self._is_alive():
             self.root.after(EDRConfig.GUI_REFRESH_INTERVAL, self._schedule_refresh)
+
+    def _is_alive(self) -> bool:
+        """Return True if the Tk root window still exists."""
+        try:
+            return self.root is not None and self.root.winfo_exists()
+        except Exception:
+            return False
 
     def _flush_queues(self):
         """Drain thread-safe queues into the GUI widgets (Issue 2)."""

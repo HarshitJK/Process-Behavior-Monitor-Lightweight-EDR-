@@ -133,12 +133,14 @@ class EDRConfig:
     # ===========================
     # GUI
     # ===========================
-    GUI_REFRESH_INTERVAL = 2000
+    # GUI (only active with --gui)
+    # ===========================
+    GUI_REFRESH_INTERVAL = 3000   # ms between root.after() ticks (point 9)
     GUI_TOP_PROCESSES    = 10
     GUI_MAX_ALERTS       = 50
     GUI_MAX_LOGS         = 200
 
     # ===========================
-    # Terminal Dashboard
+    # Terminal Dashboard (CLI mode only, never in GUI mode)
     # ===========================
-    TERMINAL_DASHBOARD_INTERVAL = 5
+    TERMINAL_DASHBOARD_INTERVAL = 5   # seconds between prints (point 8: 3-5s)

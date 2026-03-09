@@ -54,13 +54,18 @@ class LightweightEDR:
         )
         self.file_monitor.set_alert_callback(self._on_file_alert)
 
-        # Terminal dashboard (always active)
-        self.terminal_dash = TerminalDashboard(
-            responder=self.responder,
-            file_monitor=self.file_monitor,
-        )
-        # GUI dashboard (only with --gui)
-        self.gui_dash = None
+        # Dashboard – only one is ever active:
+        #   CLI mode → TerminalDashboard (prints to stdout)
+        #   GUI mode → EDRDashboard (Tkinter, main thread)
+        # NEVER create TerminalDashboard in GUI mode – it causes the freeze.
+        self.terminal_dash = None   # set below only in CLI mode
+        self.gui_dash = None        # set below only in GUI mode
+
+        if not use_gui:
+            self.terminal_dash = TerminalDashboard(
+                responder=self.responder,
+                file_monitor=self.file_monitor,
+            )
 
         # Counters
         self._scan_count:      int = 0
@@ -83,7 +88,9 @@ class LightweightEDR:
                 f"Ransomware pattern: {len(changes)} file events "
                 f"({', '.join(f'{t}:{c}' for t, c in summary.items())})"
             )
-            self.terminal_dash.add_alert("CRITICAL", alert_msg)
+            # Only forward to the active dashboard
+            if self.terminal_dash:
+                self.terminal_dash.add_alert("CRITICAL", alert_msg)
             if self.gui_dash:
                 self.gui_dash.add_alert("CRITICAL", alert_msg)
                 self.gui_dash.add_log("CRITICAL", alert_msg)
@@ -108,24 +115,29 @@ class LightweightEDR:
         except Exception as exc:
             print(f"[WARNING] File monitor failed to start: {exc}")
 
-        # Start terminal dashboard background printer
-        self.terminal_dash.start_background_refresh()
-
         self.running = True
 
         if self.use_gui:
-            # Issue 2: monitoring in background thread, GUI in main thread
+            # GUI mode:
+            #   • terminal dashboard is NOT started (avoids the freeze)
+            #   • monitoring runs in a background daemon thread
+            #   • Tkinter mainloop() runs in the main thread
             monitor_thread = threading.Thread(
-                target=self._monitoring_loop, daemon=True
+                target=self._monitoring_loop, daemon=True, name="EDR-Monitor"
             )
             monitor_thread.start()
-            self._run_gui()          # blocks until window is closed
+            self._run_gui()   # blocks until window is closed
         else:
-            self._monitoring_loop()  # CLI: monitoring in main thread
+            # CLI mode:
+            #   • terminal dashboard prints every TERMINAL_DASHBOARD_INTERVAL s
+            #   • monitoring runs in the main thread
+            self.terminal_dash.start_background_refresh()
+            self._monitoring_loop()
 
     def stop(self):
         self.running = False
-        self.terminal_dash.monitoring = False
+        if self.terminal_dash:
+            self.terminal_dash.monitoring = False
 
         try:
             if self.file_monitor.is_running():
@@ -234,7 +246,8 @@ class LightweightEDR:
                                 f"[{threat_type}] PID {proc['pid']} "
                                 f"({proc['name']}): {reasons[0]}"
                             )
-                            self.terminal_dash.add_alert(severity, alert_msg)
+                            if self.terminal_dash:
+                                self.terminal_dash.add_alert(severity, alert_msg)
 
                             if self.gui_dash:
                                 self.gui_dash.add_alert(severity, alert_msg)
@@ -246,9 +259,10 @@ class LightweightEDR:
 
                     # ---- Dashboard stats --------------------------------
                     total = self.scanner.get_total_process_count()
-                    # Bug 1: set (not accumulate) the current process count
-                    self.terminal_dash.set_scanned(len(processes))
-                    self.terminal_dash.increment_suspicious(suspicious_in_scan)
+                    # Set (not accumulate) the current process count
+                    if self.terminal_dash:
+                        self.terminal_dash.set_scanned(len(processes))
+                        self.terminal_dash.increment_suspicious(suspicious_in_scan)
 
                     if self.gui_dash:
                         self.gui_dash.update_counts(total, self._suspicious_count)
