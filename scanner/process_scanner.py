@@ -1,19 +1,30 @@
 """
 Process Scanner Module
 Scans running processes and maintains historical data for behavior analysis.
-Enhanced: captures exe path, open-file handles, and spawn-rate tracking.
+
+Enhanced:
+  - Captures exe path, open-file handles.
+  - Per-PARENT-PID spawn tracking (not system-wide).
+    Rationale: system-wide new-process count produces massive false positives
+    because normal boot / session startup spawns dozens of processes. Tracking
+    per parent lets us detect a single misbehaving process forking rapidly.
 """
 
 import psutil
 import time
 from typing import List, Dict, Optional
-from collections import deque
+from collections import defaultdict, deque
 
 
 class ProcessScanner:
     """
     Scans system processes and maintains per-process history.
-    Tracks new-process birth timestamps for rapid-spawn detection.
+
+    Spawn detection (fix for Issue #2):
+      - Tracks (parent_pid → deque of child-birth timestamps).
+      - get_parent_spawn_counts() returns {parent_pid: count_in_window}.
+      - Old system-wide get_recent_spawn_count() kept for backward compat
+        but is now derived from per-parent data.
     """
 
     # How many history entries to keep per PID
@@ -25,13 +36,13 @@ class ProcessScanner:
         # pid → list of {timestamp, cpu, memory} dicts
         self.process_cache: Dict[int, List[Dict]] = {}
 
-        # Timestamps of newly-observed PIDs (for spawn-rate detection)
-        self.new_process_times: deque = deque()
+        # parent_pid → deque of child-birth timestamps
+        self._parent_spawn_times: Dict[int, deque] = defaultdict(deque)
 
         # PIDs seen in previous scan (to detect brand-new processes)
         self._prev_pids: set = set()
 
-        # Prime the CPU percent counters (first call always returns 0)
+        # Prime the CPU percent counters (first call always returns 0.0)
         for proc in psutil.process_iter():
             try:
                 proc.cpu_percent(None)
@@ -48,7 +59,7 @@ class ProcessScanner:
     def scan_processes(self) -> List[Dict]:
         """
         Iterate all running processes and return enriched process dicts.
-        Updates internal history cache and spawn-rate tracker.
+        Updates internal history cache and per-parent spawn-rate tracker.
         """
         processes: List[Dict] = []
         current_time = time.time()
@@ -63,55 +74,80 @@ class ProcessScanner:
                 cpu = proc.cpu_percent(None)
                 mem = proc.memory_percent()
 
-                # Try to get executable path and open files (may fail on some OSes/privs)
+                # Parent PID (safe – returns 0 if unavailable)
+                try:
+                    ppid = proc.ppid()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    ppid = 0
+
                 exe = self._safe_exe(proc)
                 open_files = self._safe_open_files(proc)
                 connections = self._safe_connections(proc)
 
+                is_new = pid not in self._prev_pids
+
                 process_info: Dict = {
-                    "pid": pid,
-                    "name": proc.info.get("name") or "unknown",
-                    "cpu_percent": cpu,
+                    "pid":            pid,
+                    "ppid":           ppid,
+                    "name":           proc.info.get("name") or "unknown",
+                    "cpu_percent":    cpu,
                     "memory_percent": mem,
-                    "status": proc.info.get("status", "unknown"),
-                    "username": proc.info.get("username", ""),
-                    "exe": exe,
-                    "open_files": open_files,
-                    "connections": connections,
-                    "timestamp": current_time,
-                    "is_new": pid not in self._prev_pids,
+                    "status":         proc.info.get("status", "unknown"),
+                    "username":       proc.info.get("username", ""),
+                    "exe":            exe,
+                    "open_files":     open_files,
+                    "connections":    connections,
+                    "timestamp":      current_time,
+                    "is_new":         is_new,
                 }
 
                 processes.append(process_info)
                 self._update_cache(process_info)
 
-                # Track new process births for spawn-rate detection
-                if process_info["is_new"]:
-                    self.new_process_times.append(current_time)
+                # Track new process births per parent PID
+                if is_new and ppid:
+                    self._parent_spawn_times[ppid].append(current_time)
 
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 continue
 
-        # Prune spawn-rate window
-        cutoff = current_time - 30.0   # keep last 30 s of birth events
-        while self.new_process_times and self.new_process_times[0] < cutoff:
-            self.new_process_times.popleft()
+        # Prune old birth events from per-parent queues (keep last 60 s)
+        cutoff = current_time - 60.0
+        for ppid, dq in list(self._parent_spawn_times.items()):
+            while dq and dq[0] < cutoff:
+                dq.popleft()
+            if not dq:
+                del self._parent_spawn_times[ppid]
 
         self._prev_pids = current_pids
         self._cleanup_cache(current_pids)
         return processes
 
-    def get_process_history(self, pid: int) -> List[Dict]:
-        """Return stored CPU/memory history for a given PID."""
-        return self.process_cache.get(pid, [])
+    def get_parent_spawn_counts(self, window_seconds: float) -> Dict[int, int]:
+        """
+        Return {parent_pid: child_count} for parents that spawned at least
+        one child within the last *window_seconds* seconds.
+
+        This is the primary spawn-rate API used by BehaviorAnalyzer.
+        """
+        cutoff = time.time() - window_seconds
+        result: Dict[int, int] = {}
+        for ppid, dq in self._parent_spawn_times.items():
+            count = sum(1 for t in dq if t >= cutoff)
+            if count:
+                result[ppid] = count
+        return result
 
     def get_recent_spawn_count(self, window_seconds: float) -> int:
         """
-        Return how many new processes appeared within the last
-        *window_seconds* seconds (used for spawn-rate detection).
+        Backward-compat: total new processes across all parents in window.
+        Prefer get_parent_spawn_counts() for accurate per-parent analysis.
         """
-        cutoff = time.time() - window_seconds
-        return sum(1 for t in self.new_process_times if t >= cutoff)
+        return sum(self.get_parent_spawn_counts(window_seconds).values())
+
+    def get_process_history(self, pid: int) -> List[Dict]:
+        """Return stored CPU/memory history for a given PID."""
+        return self.process_cache.get(pid, [])
 
     def get_total_process_count(self) -> int:
         """Return total number of processes in the cache."""
@@ -128,8 +164,8 @@ class ProcessScanner:
 
         self.process_cache[pid].append({
             "timestamp": proc_info["timestamp"],
-            "cpu": proc_info["cpu_percent"],
-            "memory": proc_info["memory_percent"],
+            "cpu":       proc_info["cpu_percent"],
+            "memory":    proc_info["memory_percent"],
         })
 
         # Keep rolling window

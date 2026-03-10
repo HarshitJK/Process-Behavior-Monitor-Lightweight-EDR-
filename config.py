@@ -26,36 +26,70 @@ class EDRConfig:
     MEMORY_CRITICAL_THRESHOLD = 70.0      # Memory % → CRITICAL
 
     # ===========================
-    # Protected System Processes (Bug 6 fix)
-    # These processes are NEVER terminated, even on CRITICAL alerts.
+    # Protected System Processes
+    # These processes are NEVER terminated or suspended, even on CRITICAL alerts.
+    # Covers Linux desktop environments, display managers, and Windows core services.
     # ===========================
     PROTECTED_PROCESSES = [
-        "systemd", "gnome-shell", "lightdm", "xfce4-session",
-        "dbus-daemon", "NetworkManager", "Xorg", "X", "gdm",
-        "gdm3", "sddm", "plasmashell", "kwin_x11", "kwin_wayland",
-        "pulseaudio", "pipewire", "wpa_supplicant", "avahi-daemon",
+        # --- Requested mandatory list ---
+        "systemd", "init", "dbus-daemon", "NetworkManager",
+        "Xorg", "xfce4-session", "xfce4-power-manager",
+        "xfwm4", "xfce4-panel", "tumblerd", "lightdm",
+        "wrapper-2.0", "pulseaudio", "gvfsd",
+        # --- Extended desktop / display-manager protection ---
+        "gnome-shell", "gnome-session", "gdm", "gdm3", "sddm",
+        "plasmashell", "kwin_x11", "kwin_wayland",
+        "Xorg", "X", "xwayland",
+        "xfce4-terminal", "xfce4-whiskermenu",
+        # --- System daemons ---
+        "dbus-launch", "pipewire", "pipewire-pulse",
+        "wpa_supplicant", "avahi-daemon",
+        "systemd-journald", "systemd-logind", "systemd-udevd",
+        "kthreadd", "kworker",
+        "gvfsd-fuse", "gvfsd-trash",
+        # --- Windows core processes ---
         "system", "smss.exe", "csrss.exe", "wininit.exe",
         "winlogon.exe", "lsass.exe", "services.exe", "explorer.exe",
+        "svchost.exe", "dwm.exe",
     ]
 
     # ===========================
-    # Safe / Trusted Processes  (Bug 2 fix)
+    # Safe / Trusted Processes
     # These are NEVER analyzed – trusted system/desktop processes
     # that would otherwise generate false positives.
+    # Kept as a superset of PROTECTED_PROCESSES for analysis skip.
     # ===========================
     SAFE_PROCESSES = [
+        # Shells
         "zsh", "bash", "sh", "dash", "fish",
-        "systemd", "systemd-journal", "systemd-udevd", "systemd-logind",
+        # Systemd family
+        "systemd", "systemd-journal", "systemd-udevd",
+        "systemd-logind", "systemd-journald",
+        # Desktop environments
         "gnome-shell", "gnome-session", "gnome-keyring-d",
         "xdg-desktop-portal", "xdg-desktop-por",
-        "Xorg", "xwayland",
+        "xfce4-session", "xfce4-panel", "xfce4-power-manager",
+        "xfwm4", "xfce4-terminal", "xfce4-whiskermenu",
+        "kwin_x11", "kwin_wayland", "plasmashell",
+        # Display infrastructure
+        "Xorg", "xwayland", "X", "lightdm", "gdm", "gdm3", "sddm",
+        "wrapper-2.0",
+        # D-Bus / IPC
         "dbus-daemon", "dbus-launch",
-        "NetworkManager",
-        "lightdm", "gdm", "gdm3", "sddm",
-        "xfce4-session", "kwin_x11", "kwin_wayland", "plasmashell",
+        # Network
+        "NetworkManager", "wpa_supplicant", "avahi-daemon",
+        # init
+        "init",
+        # Audio / media
         "pulseaudio", "pipewire", "pipewire-pulse",
-        "wpa_supplicant", "avahi-daemon",
+        # GVFS
+        "gvfsd", "gvfsd-fuse", "gvfsd-trash", "tumblerd",
+        # Kernel threads
         "kthreadd", "kworker", "ksoftirqd",
+        # Windows core
+        "system", "smss.exe", "csrss.exe", "wininit.exe",
+        "winlogon.exe", "lsass.exe", "services.exe",
+        "explorer.exe", "svchost.exe", "dwm.exe",
     ]
 
     # ===========================
@@ -70,9 +104,11 @@ class EDRConfig:
 
     # ===========================
     # Spawn Rate Detection
+    # Detects rapid spawning FROM THE SAME PARENT process.
+    # Threshold: >30 child processes in 5 seconds from one parent.
     # ===========================
-    SPAWN_RATE_THRESHOLD = 20
-    SPAWN_TIME_WINDOW = 5.0
+    SPAWN_RATE_THRESHOLD = 30   # child processes per parent per window
+    SPAWN_TIME_WINDOW = 5.0     # seconds
 
     # ===========================
     # Sensitive File Paths
@@ -105,6 +141,10 @@ class EDRConfig:
     GRACEFUL_TIMEOUT = 3
     SUSPEND_ON_WARNING = False
 
+    # GUI mode – set True when --gui is passed.
+    # Adds an extra safety layer: HIGH severity is capped at SUSPEND, never TERMINATE.
+    GUI_MODE = False
+
     ACTION_ALERT_ONLY = "ALERT_ONLY"
     ACTION_TERMINATE  = "TERMINATE_PROCESS"
     ACTION_SUSPEND    = "SUSPEND_PROCESS"
@@ -124,11 +164,26 @@ class EDRConfig:
     LOG_LEVEL    = "INFO"
 
     # ===========================
-    # Severity
+    # Severity – Four-Tier Response Model
     # ===========================
-    SEVERITY_INFO     = "INFO"
-    SEVERITY_WARNING  = "WARNING"
+    #
+    #  LOW      → log only (no process action)
+    #  MEDIUM   → alert (console/GUI notification, no process action)
+    #  HIGH     → suspend process (SIGSTOP on Linux, skip on Windows)
+    #  CRITICAL → terminate process (graceful → force-kill)
+    #
+    # Legacy aliases kept for backward compat with existing code:
+    #   INFO    → LOW
+    #   WARNING → MEDIUM
+    #
+    SEVERITY_LOW      = "LOW"
+    SEVERITY_MEDIUM   = "MEDIUM"
+    SEVERITY_HIGH     = "HIGH"
     SEVERITY_CRITICAL = "CRITICAL"
+
+    # Legacy aliases (backward compat)
+    SEVERITY_INFO    = "LOW"
+    SEVERITY_WARNING = "MEDIUM"
 
     # ===========================
     # GUI

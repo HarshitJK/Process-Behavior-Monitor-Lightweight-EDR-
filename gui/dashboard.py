@@ -98,8 +98,13 @@ class TerminalDashboard:
         if recent:
             lines.append(f"\033[96m║\033[0m  {'Recent Alerts':<{W}} \033[96m║\033[0m")
             for a in recent:
-                sev    = a.get("severity", "INFO")
-                colour = "\033[91m" if sev == "CRITICAL" else "\033[93m" if sev == "WARNING" else "\033[94m"
+                sev    = a.get("severity", "LOW")
+                colour = (
+                    "\033[91m" if sev in ("CRITICAL",) else
+                    "\033[38;5;208m" if sev == "HIGH" else
+                    "\033[93m" if sev in ("MEDIUM", "WARNING") else
+                    "\033[94m"  # LOW / INFO
+                )
                 msg    = a.get("message", "")[:45]
                 lines.append(
                     f"\033[96m║\033[0m  {colour}[{sev:<8}]\033[0m {msg:<{W - 13}} \033[96m║\033[0m"
@@ -303,7 +308,12 @@ class EDRDashboard:
             insertbackground="#ffffff")
         self.alerts_text.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
         self.alerts_text.config(state="disabled")
+        # Four-tier severity colour tags
         self.alerts_text.tag_configure("CRITICAL", foreground="#ef476f")
+        self.alerts_text.tag_configure("HIGH",     foreground="#ff6b35")
+        self.alerts_text.tag_configure("MEDIUM",   foreground="#ffd166")
+        self.alerts_text.tag_configure("LOW",      foreground="#06d6a0")
+        # Legacy aliases
         self.alerts_text.tag_configure("WARNING",  foreground="#ffd166")
         self.alerts_text.tag_configure("INFO",     foreground="#06d6a0")
 
@@ -317,10 +327,15 @@ class EDRDashboard:
             insertbackground="#ffffff")
         self.log_text.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
         self.log_text.config(state="disabled")
+        # Four-tier severity colour tags
+        self.log_text.tag_configure("CRITICAL", foreground="#ef476f")
+        self.log_text.tag_configure("HIGH",     foreground="#ff6b35")
+        self.log_text.tag_configure("MEDIUM",   foreground="#ffd166")
+        self.log_text.tag_configure("LOW",      foreground="#06d6a0")
+        # Legacy aliases
         self.log_text.tag_configure("ERROR",    foreground="#ef476f")
         self.log_text.tag_configure("WARNING",  foreground="#ffd166")
         self.log_text.tag_configure("INFO",     foreground="#06d6a0")
-        self.log_text.tag_configure("CRITICAL", foreground="#ef476f")
 
     # ------------------------------------------------------------------
     # Monitoring control buttons

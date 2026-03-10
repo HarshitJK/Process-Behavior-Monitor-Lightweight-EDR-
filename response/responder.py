@@ -2,13 +2,21 @@
 Response Module – Lightweight EDR
 Handles alerts, process actions, and structured/event logging.
 
-Actions:
-  ALERT_ONLY       – print + log, no process change
-  TERMINATE_PROCESS – graceful terminate → force kill
-  SUSPEND_PROCESS   – SIGSTOP (Linux/macOS)
+Four-Tier Response Model:
+  LOW      → log only (no console output, no process action)
+  MEDIUM   → alert (console/GUI notification, no process action)
+  HIGH     → suspend process (SIGSTOP on Linux; skip on Windows)
+  CRITICAL → terminate process (graceful → force-kill)
 
-Issue 3 fix: checks PROTECTED_PROCESSES before terminating.
-Issue 7 fix: writes human-friendly edr_events.log in addition to edr.log.
+  IMPORTANT: WARNING / INFO severities (legacy aliases) NEVER trigger
+  termination. Only CRITICAL does, and even then PROTECTED_PROCESSES
+  are always skipped.
+
+GUI-mode extra safety:
+  When EDRConfig.GUI_MODE is True:
+    • HIGH  actions are downgraded to ALERT_ONLY (suspend skipped)
+    • CRITICAL actions on any process with ppid == 1 (init children)
+      are also skipped with a warning.
 """
 
 import os
@@ -24,9 +32,13 @@ from config import EDRConfig
 
 # ANSI colours
 _C = {
+    "LOW":      "\033[94m",   # blue
+    "MEDIUM":   "\033[93m",   # yellow
+    "HIGH":     "\033[38;5;208m",  # orange
+    "CRITICAL": "\033[91m",   # red
+    # Legacy aliases
     "INFO":     "\033[94m",
     "WARNING":  "\033[93m",
-    "CRITICAL": "\033[91m",
     "RESET":    "\033[0m",
 }
 
@@ -35,6 +47,32 @@ def _col(sev: str, text: str) -> str:
     if sys.stdout.isatty():
         return f"{_C.get(sev, '')}{text}{_C['RESET']}"
     return text
+
+
+def _action_for_severity(severity: str) -> str:
+    """
+    Map severity → default action according to the four-tier model.
+
+      LOW      → ALERT_ONLY  (log only)
+      MEDIUM   → ALERT_ONLY  (alert, no process change)
+      HIGH     → SUSPEND_PROCESS
+      CRITICAL → TERMINATE_PROCESS (if AUTO_TERMINATE is enabled)
+
+    GUI-mode override: HIGH → ALERT_ONLY.
+    """
+    if severity == EDRConfig.SEVERITY_CRITICAL:
+        if EDRConfig.AUTO_TERMINATE:
+            return EDRConfig.ACTION_TERMINATE
+        return EDRConfig.ACTION_ALERT_ONLY
+
+    if severity == EDRConfig.SEVERITY_HIGH:
+        if EDRConfig.GUI_MODE:
+            # Extra safety: never auto-suspend in GUI mode
+            return EDRConfig.ACTION_ALERT_ONLY
+        return EDRConfig.ACTION_SUSPEND
+
+    # LOW / MEDIUM / legacy INFO / WARNING → alert only
+    return EDRConfig.ACTION_ALERT_ONLY
 
 
 class Responder:
@@ -65,8 +103,10 @@ class Responder:
         self.total_terminated: int = 0
         self.total_suspended: int  = 0
 
-        # Protected process names (lower-cased for fast lookup)
+        # Protected process names (lower-cased for fast O(1) lookup)
         self._protected = {p.lower() for p in EDRConfig.PROTECTED_PROCESSES}
+        # Safe process names (lower-cased) – extra defense-in-depth layer
+        self._safe      = {p.lower() for p in EDRConfig.SAFE_PROCESSES}
 
     # ------------------------------------------------------------------
     # Process threat handler
@@ -76,7 +116,7 @@ class Responder:
         self,
         process: Dict,
         reasons: List[str],
-        severity: str = "WARNING",
+        severity: str = "LOW",
         threat_type: str = "UNKNOWN",
     ):
         pid    = process.get("pid")
@@ -88,14 +128,18 @@ class Responder:
 
         self.total_alerts += 1
 
-        # Decide action
-        action_type = EDRConfig.ACTION_ALERT_ONLY
-        if severity == EDRConfig.SEVERITY_CRITICAL and EDRConfig.AUTO_TERMINATE:
-            action_type = EDRConfig.ACTION_TERMINATE
-        elif severity == EDRConfig.SEVERITY_WARNING and EDRConfig.SUSPEND_ON_WARNING:
-            action_type = EDRConfig.ACTION_SUSPEND
+        # ---- Determine action -----------------------------------------------
+        action_type = _action_for_severity(severity)
 
-        # Terminal output
+        # For LOW severity – just log quietly, no console noise
+        if severity == EDRConfig.SEVERITY_LOW:
+            self.logger.info(
+                f"LOW | PROCESS | PID={pid} | NAME={name} | "
+                f"THREAT={threat_type} | REASON={reason_text}"
+            )
+            return
+
+        # ---- Console output --------------------------------------------------
         border = "=" * 60
         print(f"\n{_col(severity, border)}")
         print(_col(severity, f"[{severity}] SUSPICIOUS PROCESS DETECTED"))
@@ -111,10 +155,10 @@ class Responder:
         print(f"  Action     : {action_type}")
         print(_col(severity, border))
 
-        # Perform action
+        # ---- Perform action --------------------------------------------------
         action_result = self._take_action(action_type, pid, name)
 
-        # Pipe-delimited log
+        # ---- Pipe-delimited log ----------------------------------------------
         log_line = (
             f"{severity} | PROCESS | PID={pid} | NAME={name} | "
             f"CPU={cpu:.1f}% | MEM={memory:.1f}% | "
@@ -123,26 +167,26 @@ class Responder:
         )
         if severity == EDRConfig.SEVERITY_CRITICAL:
             self.logger.critical(log_line)
-        elif severity == EDRConfig.SEVERITY_WARNING:
+        elif severity in (EDRConfig.SEVERITY_HIGH, EDRConfig.SEVERITY_MEDIUM):
             self.logger.warning(log_line)
         else:
             self.logger.info(log_line)
 
-        # Human-friendly event log (Issue 7)
+        # ---- Human-friendly event log ----------------------------------------
         self._write_event_log(ts, severity, name, pid, cpu, memory)
 
-        # JSON log
+        # ---- JSON log --------------------------------------------------------
         self._write_json({
-            "timestamp": ts,
-            "alert_type": "process",
-            "severity": severity,
-            "threat_type": threat_type,
-            "pid": pid,
-            "process_name": name,
+            "timestamp":      ts,
+            "alert_type":     "process",
+            "severity":       severity,
+            "threat_type":    threat_type,
+            "pid":            pid,
+            "process_name":   name,
             "cpu_percent":    round(cpu,    2),
             "memory_percent": round(memory, 2),
-            "reasons": reasons,
-            "action_taken": action_result,
+            "reasons":        reasons,
+            "action_taken":   action_result,
         })
 
     # ------------------------------------------------------------------
@@ -182,10 +226,10 @@ class Responder:
                               0, 0, extra=f"Events={total_events} Trigger={trigger_file}")
 
         self._write_json({
-            "timestamp": ts,
-            "alert_type": "file_system",
-            "severity": "CRITICAL",
-            "threat_type": "RANSOMWARE_PATTERN",
+            "timestamp":    ts,
+            "alert_type":   "file_system",
+            "severity":     "CRITICAL",
+            "threat_type":  "RANSOMWARE_PATTERN",
             "trigger_file": trigger_file,
             "total_events": total_events,
             "event_summary": summary,
@@ -234,17 +278,45 @@ class Responder:
         return "Alert logged – no process action taken"
 
     def _is_protected(self, name: str) -> bool:
-        """Return True if process name is in the protected list (Issue 3)."""
-        return name.lower() in self._protected
+        """Return True if process name is in the protected or safe list."""
+        n = name.lower()
+        return n in self._protected or n in self._safe
 
     def _terminate_process(self, pid: int, name: str) -> str:
-        """Safe terminate with protected-process guard (Issue 3 fix)."""
-        # ---- Protected-process check (Issue 3) ----------------------------
+        """
+        Safe terminate with protected-process guard.
+
+        NEVER terminates:
+          • Protected / safe processes (listed in config.py)
+          • PID 1 (init/systemd) or PID 0
+          • Any process whose name resolves to a protected entry
+        """
+        # Guard 1: protected name list
         if self._is_protected(name):
             msg = f"Skipped termination – '{name}' is a protected system process"
             self.logger.warning(f"PROTECTED | PID={pid} | {msg}")
             print(f"  [SKIPPED] {msg}")
             return msg
+
+        # Guard 2: never kill PID 1 or 0 (init / idle)
+        if pid in (0, 1):
+            msg = f"Skipped termination – PID {pid} is a critical system identifier"
+            self.logger.warning(f"PROTECTED | PID={pid} | {msg}")
+            print(f"  [SKIPPED] {msg}")
+            return msg
+
+        # Guard 3: double-check by querying psutil for the real process name
+        try:
+            real_proc = psutil.Process(pid)
+            real_name = (real_proc.name() or "").lower()
+            if real_name in self._protected or real_name in self._safe:
+                msg = (f"Skipped termination – real process name '{real_name}' "
+                       f"(PID {pid}) is protected")
+                self.logger.warning(f"PROTECTED | PID={pid} | {msg}")
+                print(f"  [SKIPPED] {msg}")
+                return msg
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
 
         try:
             proc = psutil.Process(pid)
@@ -284,8 +356,11 @@ class Responder:
             return msg
 
     def _suspend_process(self, pid: int, name: str) -> str:
+        """Suspend a process. Never suspends protected processes."""
         if self._is_protected(name):
             return f"Skipped suspend – '{name}' is protected"
+        if pid in (0, 1):
+            return f"Skipped suspend – PID {pid} is a critical system identifier"
         try:
             if sys.platform != "win32":
                 os.kill(pid, signal.SIGSTOP)
@@ -306,7 +381,7 @@ class Responder:
     def _write_event_log(self, ts: str, severity: str, name: str,
                          pid: int, cpu: float, memory: float,
                          extra: str = ""):
-        """Write human-readable alert entry to edr_events.log (Issue 7)."""
+        """Write human-readable alert entry to edr_events.log."""
         try:
             line = (
                 f"[{ts}] ALERT\n"

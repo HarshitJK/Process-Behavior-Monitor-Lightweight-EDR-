@@ -37,6 +37,9 @@ class LightweightEDR:
         self.use_gui = use_gui
         self.running = False
         EDRConfig.DEBUG_MODE = debug
+        # Tell config (and responder) we are in GUI mode so extra safety
+        # guards are applied (no auto-suspend in GUI mode).
+        EDRConfig.GUI_MODE = use_gui
 
         # Core modules
         self.scanner  = ProcessScanner(scan_interval=EDRConfig.SCAN_INTERVAL)
@@ -208,8 +211,9 @@ class LightweightEDR:
 
                 try:
                     # ---- Scan ------------------------------------------
-                    processes   = self.scanner.scan_processes()
-                    spawn_count = self.scanner.get_recent_spawn_count(
+                    processes          = self.scanner.scan_processes()
+                    # Per-parent spawn counts (fix for false-positive spawning alerts)
+                    parent_spawn_counts = self.scanner.get_parent_spawn_counts(
                         EDRConfig.SPAWN_TIME_WINDOW
                     )
                     self._scan_count    += 1
@@ -225,7 +229,10 @@ class LightweightEDR:
                                 continue
 
                             history  = self.scanner.get_process_history(proc["pid"])
-                            analysis = self.analyzer.analyze(proc, history, spawn_count)
+                            analysis = self.analyzer.analyze(
+                                proc, history,
+                                parent_spawn_counts=parent_spawn_counts
+                            )
 
                             if not analysis["suspicious"]:
                                 continue
