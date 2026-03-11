@@ -85,8 +85,12 @@ class RansomwareDetector(FileSystemEventHandler):
             and (current_time - self._last_alert_time) >= self._alert_cooldown
         ):
             self._last_alert_time = current_time
-            summary = dict(self.event_type_counts)
             recent = list(self.file_changes)
+            # Recompute summary from the snapshot – never rely on the running
+            # Counter which can drift negative after repeated window flushes.
+            summary: dict = {}
+            for _, _, etype in recent:
+                summary[etype] = summary.get(etype, 0) + 1
             self.file_changes.clear()
             self.event_type_counts.clear()
 

@@ -14,6 +14,7 @@ import psutil
 import time
 from typing import List, Dict, Optional
 from collections import defaultdict, deque
+from config import EDRConfig
 
 
 class ProcessScanner:
@@ -43,9 +44,13 @@ class ProcessScanner:
         self._prev_pids: set = set()
 
         # Prime the CPU percent counters (first call always returns 0.0)
+        # and simultaneously build the initial PID baseline so that the
+        # very first real scan does NOT treat every existing process as
+        # 'new' (which would create thousands of phantom spawn events).
         for proc in psutil.process_iter():
             try:
                 proc.cpu_percent(None)
+                self._prev_pids.add(proc.pid)   # baseline for spawn detection
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
 
@@ -70,7 +75,11 @@ class ProcessScanner:
         ):
             try:
                 pid = proc.pid
-                current_pids.add(pid)
+
+                # Always skip the EDR monitoring process itself
+                if pid == EDRConfig.EDR_OWN_PID:
+                    current_pids.add(pid)   # still track it to avoid 'new' on next scan
+                    continue
                 cpu = proc.cpu_percent(None)
                 mem = proc.memory_percent()
 

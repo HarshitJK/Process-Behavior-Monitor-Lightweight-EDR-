@@ -17,6 +17,7 @@ Usage:
   python main.py --debug         # verbose per-rule output
 """
 
+import os
 import time
 import signal
 import sys
@@ -40,6 +41,8 @@ class LightweightEDR:
         # Tell config (and responder) we are in GUI mode so extra safety
         # guards are applied (no auto-suspend in GUI mode).
         EDRConfig.GUI_MODE = use_gui
+        # Record this process's PID so scanner/analyzer can self-exclude.
+        EDRConfig.EDR_OWN_PID = os.getpid()
 
         # Core modules
         self.scanner  = ProcessScanner(scan_interval=EDRConfig.SCAN_INTERVAL)
@@ -220,14 +223,8 @@ class LightweightEDR:
                     suspicious_in_scan   = 0
 
                     # ---- Analyze ----------------------------------------
-                    # Build safe-process set once per scan (Bug 2)
-                    _safe = {p.lower() for p in EDRConfig.SAFE_PROCESSES}
                     for proc in processes:
                         try:
-                            # Bug 2: skip trusted system processes before analyze
-                            if (proc.get("name") or "").lower() in _safe:
-                                continue
-
                             history  = self.scanner.get_process_history(proc["pid"])
                             analysis = self.analyzer.analyze(
                                 proc, history,
@@ -273,6 +270,8 @@ class LightweightEDR:
 
                     if self.gui_dash:
                         self.gui_dash.update_counts(total, self._suspicious_count)
+
+                    time.sleep(EDRConfig.SCAN_INTERVAL)
 
                 except Exception as exc:
                     print(f"[ERROR] Scan iteration error: {exc}")

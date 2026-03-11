@@ -107,6 +107,8 @@ class Responder:
         self._protected = {p.lower() for p in EDRConfig.PROTECTED_PROCESSES}
         # Safe process names (lower-cased) – extra defense-in-depth layer
         self._safe      = {p.lower() for p in EDRConfig.SAFE_PROCESSES}
+        # Prefix-based safe list (handles kworker/0:1, ksoftirqd/3, etc.)
+        self._safe_prefixes = [p.lower() for p in EDRConfig.SAFE_PROCESS_PREFIXES]
 
     # ------------------------------------------------------------------
     # Process threat handler
@@ -277,10 +279,20 @@ class Responder:
             return self._suspend_process(pid, name)
         return "Alert logged – no process action taken"
 
-    def _is_protected(self, name: str) -> bool:
-        """Return True if process name is in the protected or safe list."""
+    def _is_protected(self, name: str, pid: int = -1) -> bool:
+        """Return True if process name/PID should never be terminated."""
+        # 1. Always protect the EDR process itself
+        if pid != -1 and pid == EDRConfig.EDR_OWN_PID:
+            return True
         n = name.lower()
-        return n in self._protected or n in self._safe
+        # 2. Exact set match
+        if n in self._protected or n in self._safe:
+            return True
+        # 3. Prefix match (catches kworker/0:1, ksoftirqd/3, etc.)
+        for prefix in self._safe_prefixes:
+            if n.startswith(prefix):
+                return True
+        return False
 
     def _terminate_process(self, pid: int, name: str) -> str:
         """
@@ -291,8 +303,8 @@ class Responder:
           • PID 1 (init/systemd) or PID 0
           • Any process whose name resolves to a protected entry
         """
-        # Guard 1: protected name list
-        if self._is_protected(name):
+        # Guard 1: protected name list (includes prefix check + PID check)
+        if self._is_protected(name, pid):
             msg = f"Skipped termination – '{name}' is a protected system process"
             self.logger.warning(f"PROTECTED | PID={pid} | {msg}")
             print(f"  [SKIPPED] {msg}")
@@ -308,8 +320,8 @@ class Responder:
         # Guard 3: double-check by querying psutil for the real process name
         try:
             real_proc = psutil.Process(pid)
-            real_name = (real_proc.name() or "").lower()
-            if real_name in self._protected or real_name in self._safe:
+            real_name = (real_proc.name() or "")
+            if self._is_protected(real_name, pid):
                 msg = (f"Skipped termination – real process name '{real_name}' "
                        f"(PID {pid}) is protected")
                 self.logger.warning(f"PROTECTED | PID={pid} | {msg}")
@@ -357,16 +369,16 @@ class Responder:
 
     def _suspend_process(self, pid: int, name: str) -> str:
         """Suspend a process. Never suspends protected processes."""
-        if self._is_protected(name):
+        if self._is_protected(name, pid):
             return f"Skipped suspend – '{name}' is protected"
         if pid in (0, 1):
             return f"Skipped suspend – PID {pid} is a critical system identifier"
+        if sys.platform == "win32":
+            # SIGSTOP is not available on Windows; skip silently
+            return f"Suspend not supported on Windows for PID {pid}"
         try:
-            if sys.platform != "win32":
-                os.kill(pid, signal.SIGSTOP)
-                result = f"Process '{name}' (PID {pid}) suspended (SIGSTOP)"
-            else:
-                result = f"Suspend not supported on Windows for PID {pid}"
+            os.kill(pid, signal.SIGSTOP)
+            result = f"Process '{name}' (PID {pid}) suspended (SIGSTOP)"
             self.logger.warning(f"ACTION | {result}")
             self.total_suspended += 1
             print(f"  [ACTION] {result}")

@@ -48,12 +48,12 @@ class BehaviorAnalyzer:
         cpu_consecutive_checks: Optional[int] = None,
         cooldown_seconds: Optional[int] = None,
     ):
-        self.cpu_threshold   = cpu_threshold or EDRConfig.CPU_THRESHOLD
+        self.cpu_threshold   = cpu_threshold           if cpu_threshold           is not None else EDRConfig.CPU_THRESHOLD
         self.cpu_crit        = EDRConfig.CPU_CRITICAL_THRESHOLD
-        self.mem_warn        = memory_warning_threshold or EDRConfig.MEMORY_WARNING_THRESHOLD
-        self.mem_crit        = memory_critical_threshold or EDRConfig.MEMORY_CRITICAL_THRESHOLD
-        self.cpu_consecutive = cpu_consecutive_checks or EDRConfig.CPU_CONSECUTIVE_CHECKS
-        self.cooldown_seconds = cooldown_seconds or EDRConfig.ALERT_COOLDOWN_SECONDS
+        self.mem_warn        = memory_warning_threshold  if memory_warning_threshold  is not None else EDRConfig.MEMORY_WARNING_THRESHOLD
+        self.mem_crit        = memory_critical_threshold if memory_critical_threshold is not None else EDRConfig.MEMORY_CRITICAL_THRESHOLD
+        self.cpu_consecutive = cpu_consecutive_checks    if cpu_consecutive_checks    is not None else EDRConfig.CPU_CONSECUTIVE_CHECKS
+        self.cooldown_seconds = cooldown_seconds         if cooldown_seconds          is not None else EDRConfig.ALERT_COOLDOWN_SECONDS
 
         self.last_alert_time: Dict[int, float] = {}
         self._keywords   = [kw.lower() for kw in EDRConfig.SUSPICIOUS_KEYWORDS]
@@ -61,6 +61,8 @@ class BehaviorAnalyzer:
         # Safe / protected – skip analysis entirely (defense-in-depth)
         self._safe_procs = {p.lower() for p in EDRConfig.SAFE_PROCESSES}
         self._protected  = {p.lower() for p in EDRConfig.PROTECTED_PROCESSES}
+        # Prefix-based safe list (handles kworker/0:1, ksoftirqd/3, etc.)
+        self._safe_prefixes = [p.lower() for p in EDRConfig.SAFE_PROCESS_PREFIXES]
 
     # ------------------------------------------------------------------
 
@@ -93,8 +95,15 @@ class BehaviorAnalyzer:
         open_files: List[str] = [f.lower() for f in process.get("open_files", [])]
         now  = time.time()
 
-        # Defense-in-depth: skip safe and protected processes entirely
-        if name in self._safe_procs or name in self._protected:
+        # Defense-in-depth: skip safe and protected processes entirely.
+        # Checks:
+        #  1. EDR's own PID – always skip (prevents self-flagging).
+        #  2. Exact name match in safe / protected sets.
+        #  3. Prefix match (catches kworker/0:1, ksoftirqd/3, etc.).
+        if pid == EDRConfig.EDR_OWN_PID:
+            return self._result(False, EDRConfig.SEVERITY_LOW,
+                                ["EDR self-exclusion – own process skipped"], "NONE")
+        if self._is_safe(name):
             return self._result(False, EDRConfig.SEVERITY_LOW,
                                 ["Trusted/protected process – skipped"], "NONE")
 
@@ -208,6 +217,23 @@ class BehaviorAnalyzer:
         self.last_alert_time.pop(pid, None)
 
     # ------------------------------------------------------------------
+
+    def _is_safe(self, name: str) -> bool:
+        """
+        Return True if *name* should be considered a trusted process.
+
+        Two-tier check:
+          1. Exact match  – O(1) set lookup against safe_procs + protected.
+          2. Prefix match – linear scan of SAFE_PROCESS_PREFIXES.
+             Needed for kernel threads whose names end with CPU/core numbers
+             (e.g. "kworker/0:1", "ksoftirqd/3", "migration/0").
+        """
+        if name in self._safe_procs or name in self._protected:
+            return True
+        for prefix in self._safe_prefixes:
+            if name.startswith(prefix):
+                return True
+        return False
 
     def _check_keywords(self, name: str, exe: str) -> str:
         combined = f"{name} {exe}"

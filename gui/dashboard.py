@@ -427,20 +427,23 @@ class EDRDashboard:
     def _update_processes(self):
         """
         Refresh process table from psutil.
-        Issue 4 fix: calls cpu_percent(interval=None) correctly; psutil
-        returns non-zero values because we primed the counters at startup.
+        cpu_percent(interval=None) is non-blocking; it returns the CPU
+        usage since the last call on that process object.  We call it
+        directly (not via process_iter attr) to get live values since
+        the scanner init already primed per-process CPU timers.
         """
         try:
             import tkinter as tk
             procs = []
             for p in psutil.process_iter(
-                    ["pid", "name", "cpu_percent", "memory_percent", "status"]):
+                    ["pid", "name", "memory_percent", "status"]):
                 try:
                     info = p.info
+                    cpu  = p.cpu_percent(None)   # non-blocking live reading
                     procs.append({
                         "pid":    info["pid"],
                         "name":   (info["name"] or "?")[:28],
-                        "cpu":    info["cpu_percent"]    or 0.0,
+                        "cpu":    cpu if cpu is not None else 0.0,
                         "mem":    info["memory_percent"] or 0.0,
                         "status": info["status"] or "",
                     })
@@ -466,7 +469,7 @@ class EDRDashboard:
             self.process_tree.tag_configure("CRITICAL", foreground="#ef476f")
             self.process_tree.tag_configure("WARNING",  foreground="#ffd166")
 
-            # Update Processes stat counter with actual live count (Issue 4)
+            # Update Processes stat counter with actual live count
             self._total_processes = len(procs)
         except Exception:
             pass

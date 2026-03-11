@@ -39,7 +39,7 @@ class EDRConfig:
         # --- Extended desktop / display-manager protection ---
         "gnome-shell", "gnome-session", "gdm", "gdm3", "sddm",
         "plasmashell", "kwin_x11", "kwin_wayland",
-        "Xorg", "X", "xwayland",
+        "X", "xwayland",
         "xfce4-terminal", "xfce4-whiskermenu",
         # --- System daemons ---
         "dbus-launch", "pipewire", "pipewire-pulse",
@@ -84,13 +84,71 @@ class EDRConfig:
         "pulseaudio", "pipewire", "pipewire-pulse",
         # GVFS
         "gvfsd", "gvfsd-fuse", "gvfsd-trash", "tumblerd",
-        # Kernel threads
-        "kthreadd", "kworker", "ksoftirqd",
+        # Kernel threads (exact names – prefix variants handled by SAFE_PROCESS_PREFIXES)
+        "kthreadd", "kworker", "ksoftirqd", "migration",
+        "rcu_sched", "rcu_bh", "rcu_preempt", "watchdog",
+        "events", "khelper", "kdevtmpfs", "netns",
         # Windows core
         "system", "smss.exe", "csrss.exe", "wininit.exe",
         "winlogon.exe", "lsass.exe", "services.exe",
         "explorer.exe", "svchost.exe", "dwm.exe",
+        # ── EDR self-exclusion ──────────────────────────────────────────
+        # The EDR itself runs as 'python' / 'python3' and may spike CPU
+        # while scanning.  Excluding it prevents the monitor from flagging
+        # its own activity as suspicious.
+        "python", "python3", "python3.11", "python3.12",
+        "python3.10", "python3.9", "python2", "python2.7",
+        "main.py",   # in case psutil reports the script name
     ]
+
+    # ===========================
+    # Safe Process Name PREFIXES
+    # ===========================
+    # Processes whose name STARTS WITH any of these strings are treated as
+    # safe regardless of the suffix (e.g. "kworker/0:1", "ksoftirqd/3").
+    # This is needed because kernel threads carry CPU/core numbers in their
+    # names, so exact-name matching misses them.
+    SAFE_PROCESS_PREFIXES = [
+        "kworker/",
+        "ksoftirqd/",
+        "migration/",
+        "rcu_",
+        "watchdog/",
+        "cpuhp/",
+        "idle_inject/",
+        "kthread",
+        "irq/",
+        "scsi_",
+        "nvme",
+        "xfsalloc",
+        "xfs_",
+        "jbd2/",
+        "ext4-",
+        "mmcqd/",
+        "kswapd",
+        "khugepaged",
+        "kcompactd",
+        "khungtaskd",
+        "oom_reaper",
+        "writeback",
+        "bdi-default",
+        "kintegrityd",
+        "kblockd",
+        "blkcg_punt_bio",
+        "edac-poller",
+        "devfreq_wq",
+        # NOTE: 'python' is NOT listed here intentionally – a broad 'python'
+        # prefix would suppress any process starting with 'python', which
+        # could include malware.  Python self-exclusion is handled via
+        # exact names in SAFE_PROCESSES and by PID in EDR_OWN_PID.
+    ]
+
+    # ===========================
+    # EDR Own PID (set at runtime)
+    # ===========================
+    # Populated by main.py at startup so the scanner/analyzer can skip
+    # the EDR process itself even if psutil reports a different name.
+    EDR_OWN_PID: int = os.getpid()
 
     # ===========================
     # Suspicious Process Names
