@@ -43,6 +43,9 @@ class ProcessScanner:
         # PIDs seen in previous scan (to detect brand-new processes)
         self._prev_pids: set = set()
 
+        # Cache safe prefixes for fast per-spawn lookup
+        self._safe_prefixes = [p.lower() for p in EDRConfig.SAFE_PROCESS_PREFIXES]
+
         # Prime the CPU percent counters (first call always returns 0.0)
         # and simultaneously build the initial PID baseline so that the
         # very first real scan does NOT treat every existing process as
@@ -113,9 +116,21 @@ class ProcessScanner:
                 processes.append(process_info)
                 self._update_cache(process_info)
 
-                # Track new process births per parent PID
-                if is_new and ppid:
-                    self._parent_spawn_times[ppid].append(current_time)
+                # Track new process births per parent PID.
+                # NEVER count births whose parent is a known system root
+                # (PID 0/1/2 = idle/init/kthreadd) because those parents
+                # legitimately spawn hundreds of children and would trigger
+                # false CRITICAL alerts for every process on the system.
+                # Also skip kernel-thread children (kworker/*, etc.) since
+                # they are always safe regardless of which parent spawned them.
+                if is_new and ppid and ppid not in EDRConfig.SAFE_SPAWN_PARENT_PIDS:
+                    child_name = (proc.info.get("name") or "").lower()
+                    is_safe_child = any(
+                        child_name.startswith(pfx)
+                        for pfx in self._safe_prefixes
+                    )
+                    if not is_safe_child:
+                        self._parent_spawn_times[ppid].append(current_time)
 
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 continue

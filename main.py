@@ -23,6 +23,7 @@ import signal
 import sys
 import threading
 import argparse
+import psutil as _psutil
 
 from scanner.process_scanner import ProcessScanner
 from analyzer.behavior_analyzer import BehaviorAnalyzer
@@ -43,6 +44,12 @@ class LightweightEDR:
         EDRConfig.GUI_MODE = use_gui
         # Record this process's PID so scanner/analyzer can self-exclude.
         EDRConfig.EDR_OWN_PID = os.getpid()
+        # Record the parent process's PID (the terminal that launched us)
+        # so it is never targeted for termination or suspension.
+        try:
+            EDRConfig.EDR_PARENT_PID = _psutil.Process().ppid()
+        except Exception:
+            EDRConfig.EDR_PARENT_PID = 0
 
         # Core modules
         self.scanner  = ProcessScanner(scan_interval=EDRConfig.SCAN_INTERVAL)

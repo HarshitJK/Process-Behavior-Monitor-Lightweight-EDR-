@@ -99,9 +99,10 @@ class Responder:
             self.logger.addHandler(h)
 
         # Runtime counters
-        self.total_alerts: int     = 0
-        self.total_terminated: int = 0
-        self.total_suspended: int  = 0
+        self.total_alerts: int            = 0
+        self.total_terminated: int        = 0
+        self.total_suspended: int         = 0
+        self.total_termination_attempts: int = 0   # increments on every attempt
 
         # Protected process names (lower-cased for fast O(1) lookup)
         self._protected = {p.lower() for p in EDRConfig.PROTECTED_PROCESSES}
@@ -263,9 +264,10 @@ class Responder:
 
     def get_stats(self) -> Dict:
         return {
-            "total_alerts":     self.total_alerts,
-            "total_terminated": self.total_terminated,
-            "total_suspended":  self.total_suspended,
+            "total_alerts":               self.total_alerts,
+            "total_terminated":           self.total_terminated,
+            "total_suspended":            self.total_suspended,
+            "total_termination_attempts": self.total_termination_attempts,
         }
 
     # ------------------------------------------------------------------
@@ -280,15 +282,18 @@ class Responder:
         return "Alert logged – no process action taken"
 
     def _is_protected(self, name: str, pid: int = -1) -> bool:
-        """Return True if process name/PID should never be terminated."""
+        """Return True if this process/PID must never be terminated."""
         # 1. Always protect the EDR process itself
         if pid != -1 and pid == EDRConfig.EDR_OWN_PID:
             return True
+        # 2. Always protect the terminal that launched the EDR
+        if pid != -1 and EDRConfig.EDR_PARENT_PID and pid == EDRConfig.EDR_PARENT_PID:
+            return True
         n = name.lower()
-        # 2. Exact set match
+        # 3. Exact set match against safe + protected lists
         if n in self._protected or n in self._safe:
             return True
-        # 3. Prefix match (catches kworker/0:1, ksoftirqd/3, etc.)
+        # 4. Prefix match (catches kworker/0:1, ksoftirqd/3, etc.)
         for prefix in self._safe_prefixes:
             if n.startswith(prefix):
                 return True
@@ -330,6 +335,7 @@ class Responder:
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
 
+        self.total_termination_attempts += 1
         try:
             proc = psutil.Process(pid)
             if not proc.is_running():
@@ -358,13 +364,14 @@ class Responder:
         except psutil.NoSuchProcess:
             return f"PID {pid} no longer exists"
         except psutil.AccessDenied:
-            msg = f"Access denied terminating PID {pid} – run with sudo"
+            msg = f"Access denied terminating PID {pid} ('{name}') – run EDR with sudo/root for full termination capability"
             self.logger.error(f"ACTION FAILED | {msg}")
-            print(f"  [ACTION] {msg}")
+            print(f"  [BLOCKED] {_col('HIGH', msg)}")
             return msg
         except Exception as exc:
             msg = f"Failed to terminate PID {pid}: {exc}"
             self.logger.error(f"ACTION FAILED | {msg}")
+            print(f"  [ERROR] {msg}")
             return msg
 
     def _suspend_process(self, pid: int, name: str) -> str:

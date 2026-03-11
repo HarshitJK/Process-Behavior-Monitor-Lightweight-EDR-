@@ -96,13 +96,17 @@ class BehaviorAnalyzer:
         now  = time.time()
 
         # Defense-in-depth: skip safe and protected processes entirely.
-        # Checks:
-        #  1. EDR's own PID – always skip (prevents self-flagging).
-        #  2. Exact name match in safe / protected sets.
-        #  3. Prefix match (catches kworker/0:1, ksoftirqd/3, etc.).
+        # Checks (in priority order):
+        #  1. EDR's own PID      – prevents self-flagging.
+        #  2. EDR's parent PID   – prevents terminating the launch terminal.
+        #  3. Exact name match   – trusted names in SAFE/PROTECTED lists.
+        #  4. Prefix match       – catches kworker/0:1, ksoftirqd/3, etc.
         if pid == EDRConfig.EDR_OWN_PID:
             return self._result(False, EDRConfig.SEVERITY_LOW,
                                 ["EDR self-exclusion – own process skipped"], "NONE")
+        if EDRConfig.EDR_PARENT_PID and pid == EDRConfig.EDR_PARENT_PID:
+            return self._result(False, EDRConfig.SEVERITY_LOW,
+                                ["EDR launch terminal – skipped"], "NONE")
         if self._is_safe(name):
             return self._result(False, EDRConfig.SEVERITY_LOW,
                                 ["Trusted/protected process – skipped"], "NONE")
@@ -178,17 +182,20 @@ class BehaviorAnalyzer:
             threat_type = "SENSITIVE_FILE_ACCESS"
 
         # ---- Rule F: Rapid spawn detection (PER-PARENT-PID) ------------------
-        # Use per-parent counts when available (new API), else fall back to
-        # legacy system-wide count for backward compatibility.
+        # Only fire if the parent is NOT a known system-root PID.
+        # PID 0/1/2 (idle/init/kthreadd) legitimately spawn hundreds of
+        # children and are never counted in get_parent_spawn_counts(), but we
+        # add this guard in the analyzer as a second safety layer.
         ppid_spawn_count = 0
-        if parent_spawn_counts is not None:
-            # Check how many children THIS process's parent has spawned
-            ppid_spawn_count = parent_spawn_counts.get(ppid, 0)
-            # Also check if this process itself is a heavy spawner (as a parent)
-            ppid_spawn_count = max(ppid_spawn_count,
-                                   parent_spawn_counts.get(pid, 0))
-        else:
-            ppid_spawn_count = recent_spawn_count
+        if ppid not in EDRConfig.SAFE_SPAWN_PARENT_PIDS:
+            if parent_spawn_counts is not None:
+                # Count spawns attributed to this process's parent
+                ppid_spawn_count = parent_spawn_counts.get(ppid, 0)
+                # Also check if THIS process is itself a heavy spawner
+                ppid_spawn_count = max(ppid_spawn_count,
+                                       parent_spawn_counts.get(pid, 0))
+            else:
+                ppid_spawn_count = recent_spawn_count
 
         spawn_thresh = EDRConfig.SPAWN_RATE_THRESHOLD
         if ppid_spawn_count >= spawn_thresh:

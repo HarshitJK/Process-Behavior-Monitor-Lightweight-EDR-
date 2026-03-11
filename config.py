@@ -84,7 +84,7 @@ class EDRConfig:
         "pulseaudio", "pipewire", "pipewire-pulse",
         # GVFS
         "gvfsd", "gvfsd-fuse", "gvfsd-trash", "tumblerd",
-        # Kernel threads (exact names – prefix variants handled by SAFE_PROCESS_PREFIXES)
+        # Kernel threads (exact names – prefix variants in SAFE_PROCESS_PREFIXES)
         "kthreadd", "kworker", "ksoftirqd", "migration",
         "rcu_sched", "rcu_bh", "rcu_preempt", "watchdog",
         "events", "khelper", "kdevtmpfs", "netns",
@@ -92,13 +92,21 @@ class EDRConfig:
         "system", "smss.exe", "csrss.exe", "wininit.exe",
         "winlogon.exe", "lsass.exe", "services.exe",
         "explorer.exe", "svchost.exe", "dwm.exe",
-        # ── EDR self-exclusion ──────────────────────────────────────────
-        # The EDR itself runs as 'python' / 'python3' and may spike CPU
-        # while scanning.  Excluding it prevents the monitor from flagging
-        # its own activity as suspicious.
-        "python", "python3", "python3.11", "python3.12",
-        "python3.10", "python3.9", "python2", "python2.7",
-        "main.py",   # in case psutil reports the script name
+        # ── Terminal emulators ───────────────────────────────────────────
+        # Protect the terminal window that launched the EDR (and any others
+        # open on the desktop) from accidental termination.
+        "qterminal", "xterm", "xterm-256color",
+        "gnome-terminal", "gnome-terminal-",
+        "konsole", "terminator", "tilix",
+        "alacritty", "kitty", "st", "urxvt", "rxvt",
+        "lxterminal", "mate-terminal", "sakura", "xfce4-terminal",
+        # ── EDR / Python self-exclusion ──────────────────────────────────
+        # IMPORTANT: 'python', 'python3' etc. are intentionally NOT listed
+        # here.  Attack-simulation scripts running as separate python
+        # processes (different PID from EDR_OWN_PID) must be detectable.
+        # The EDR's own python process is excluded exclusively by PID via
+        # EDR_OWN_PID, which is more precise than a name-based blanket skip.
+        "main.py",   # in case psutil reports the script name directly
     ]
 
     # ===========================
@@ -137,10 +145,7 @@ class EDRConfig:
         "blkcg_punt_bio",
         "edac-poller",
         "devfreq_wq",
-        # NOTE: 'python' is NOT listed here intentionally – a broad 'python'
-        # prefix would suppress any process starting with 'python', which
-        # could include malware.  Python self-exclusion is handled via
-        # exact names in SAFE_PROCESSES and by PID in EDR_OWN_PID.
+        # 'python' is NOT a prefix here – see comment in SAFE_PROCESSES above.
     ]
 
     # ===========================
@@ -149,6 +154,29 @@ class EDRConfig:
     # Populated by main.py at startup so the scanner/analyzer can skip
     # the EDR process itself even if psutil reports a different name.
     EDR_OWN_PID: int = os.getpid()
+
+    # ===========================
+    # Safe Spawn Parent PIDs
+    # ===========================
+    # These PIDs are system roots that legitimately spawn hundreds of
+    # children (kernel threads, early daemon forks) and must NEVER be
+    # counted as "rapid spawners" in the PROCESS_SPAWN_ANOMALY rule.
+    #
+    #   PID 0 – idle / swapper (kernel)
+    #   PID 1 – init / systemd   (all user-space daemons are children)
+    #   PID 2 – kthreadd          (all kernel worker threads are children)
+    #
+    # Without this exclusion, a burst of kworker/* spawns from kthreadd
+    # inflates the per-parent count for PID 2, causing EVERY process with
+    # ppid=2 to receive a false CRITICAL PROCESS_SPAWN_ANOMALY alert.
+    SAFE_SPAWN_PARENT_PIDS: frozenset = frozenset({0, 1, 2})
+
+    # ===========================
+    # EDR Parent PID  (set at runtime in main.py)
+    # ===========================
+    # PID of the terminal / shell that launched the EDR.
+    # Protected from termination so the user's terminal is never killed.
+    EDR_PARENT_PID: int = 0
 
     # ===========================
     # Suspicious Process Names
